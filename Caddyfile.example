@@ -1,0 +1,27 @@
+# Caddy configuration for Classroom Book Recs (DuckDNS + free HTTPS).
+#
+# This is the ONLY config file Caddy needs. Caddy automatically fetches and
+# renews a free Let's Encrypt certificate and routes HTTPS to the app.
+#
+# SETUP
+#   1. Rename this file to  Caddyfile   (same folder is fine)
+#   2. Replace mybookrecs.duckdns.org below with YOUR real DuckDNS hostname
+#   3. Install Caddy  (https://caddyserver.com/download)
+#   4. From this folder run:  caddy run
+#
+# PORT MODEL (the app always listens on 0.0.0.0:8080)
+#   PRIMARY (recommended): Caddy listens on 443 (standard HTTPS) and the
+#     router forwards external 443 -> this computer -> 443.
+#   ALTERNATIVE (443 already busy on this machine): uncomment the :8443 line
+#     below and forward external 443 -> this computer -> 8443 instead.
+#
+# If you switch to the :8443 form, delete/replace the plain hostname block.
+
+mybookrecs.duckdns.org {
+	reverse_proxy localhost:8080
+}
+
+# Alternative form (use if 443 is taken on the hosting computer):
+#mybookrecs.duckdns.org:8443 {
+#	reverse_proxy localhost:8080
+#}

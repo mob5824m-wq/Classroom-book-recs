@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Teacher Dashboard — Book Recs</title>
+  <link rel="stylesheet" href="/css/style.css">
+<style>
+  .slip {
+    border: 2px dashed #888;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 0.5rem 0;
+    page-break-inside: avoid;
+  }
+  .slip-header {
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 0.4rem;
+  }
+  .slip-code {
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    font-family: 'Courier New', monospace;
+    margin-bottom: 0.2rem;
+  }
+  .slip-url {
+    font-size: 0.8rem;
+    color: #666;
+  }
+  @media print {
+    body * { visibility: hidden !important; }
+    #handout-modal, #handout-modal * { visibility: visible !important; }
+    #handout-modal {
+      position: static !important;
+      display: block !important;
+      background: #fff !important;
+    }
+    #handout-modal .modal {
+      box-shadow: none !important;
+      max-height: none !important;
+      padding: 0 !important;
+      max-width: 100% !important;
+    }
+    .close-btn, .no-print, .top-bar { display: none !important; }
+    .slip { border-color: #000; }
+  }
+</style>
+</head>
+<body data-active-page="admin">
+  <header class="top-bar"></header>
+
+  <main class="container">
+    <h1 style="margin-bottom:.5rem">📊 Teacher Dashboard</h1>
+    <p class="text-muted mb-2">Manage books, students, and recommendations</p>
+
+    <div class="tabs" id="admin-tabs">
+      <button class="tab active" data-tab="books">📚 Books</button>
+      <button class="tab" data-tab="classes">🏫 Classes</button>
+      <button class="tab" data-tab="students">👩‍🎓 Students</button>
+      <button class="tab" data-tab="questionnaires">📝 Questionnaires</button>
+      <button class="tab" data-tab="recs">⭐ Recommendations</button>
+      <button class="tab" data-tab="settings">⚙️ Settings</button>
+    </div>
+
+    <!-- ===== BOOKS TAB ===== -->
+    <div class="tab-content active" id="tab-books">
+      <div class="flex justify-between items-center mb-2">
+        <h2>Book Catalog</h2>
+        <button class="btn btn-primary" onclick="openAddBook()">+ Add Book</button>
+      </div>
+      <div class="filter-bar">
+        <input type="text" class="search-input" id="book-search" placeholder="Search books...">
+        <select id="book-filter-pick">
+          <option value="">All Books</option>
+          <option value="pick">Teacher Picks Only</option>
+          <option value="not-pick">Not Teacher Picks</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Author</th>
+              <th>Genres</th>
+              <th>Pages</th>
+              <th>Difficulty</th>
+              <th>Teacher Pick</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="books-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== CLASSES TAB ===== -->
+    <div class="tab-content" id="tab-classes">
+      <div class="flex justify-between items-center mb-2">
+        <h2>Classes</h2>
+        <button class="btn btn-primary" onclick="openAddClass()">+ Add Class</button>
+      </div>
+      <p class="text-muted mb-2" style="font-size:.9rem">Manage classes and assign a questionnaire to each. Students are assigned to classes when created.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Class Name</th>
+              <th>Assigned Questionnaire</th>
+              <th>Students</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="classes-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== STUDENTS TAB ===== -->
+    <div class="tab-content" id="tab-students">
+      <div class="flex justify-between items-center mb-2">
+        <h2>Students</h2>
+        <div class="flex gap-1">
+          <button class="btn btn-outline" onclick="printAllSlips()">🖨️ Print All Slips</button>
+          <button class="btn btn-primary" onclick="openAddStudent()">+ Add Student</button>
+          <button class="btn btn-secondary" onclick="openBulkAdd()">Bulk Add</button>
+        </div>
+      </div>
+      <p class="text-muted mb-2" style="font-size:.9rem">Students log in with a unique code. You can also set or reset passwords.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Display Name</th>
+              <th>Class</th>
+              <th>Questionnaire</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="students-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== RECOMMENDATIONS TAB ===== -->
+    <div class="tab-content" id="tab-recs">
+      <h2>Student Recommendations</h2>
+      <p class="text-muted mb-2" style="font-size:.9rem">View what books are recommended for each student based on their questionnaire</p>
+      <div id="recs-overview"></div>
+    </div>
+
+    <!-- ===== QUESTIONNAIRES TAB ===== -->
+    <div class="tab-content" id="tab-questionnaires">
+      <div class="flex justify-between items-center mb-2">
+        <h2>Questionnaires</h2>
+        <button class="btn btn-primary" onclick="openAddQuestionnaire()">+ New Questionnaire</button>
+      </div>
+      <p class="text-muted mb-2" style="font-size:.9rem">Create and edit questionnaires. Each class can have a different questionnaire. Click a questionnaire to edit its questions.</p>
+
+      <!-- Questionnaire list -->
+      <div id="questionnaire-list"></div>
+
+      <!-- Questionnaire editor (hidden by default) -->
+      <div id="questionnaire-editor" class="card" style="display:none">
+        <div class="flex justify-between items-center mb-2">
+          <h3 id="qe-title">Edit Questionnaire</h3>
+          <button class="btn btn-sm btn-outline" onclick="closeQuestionnaireEditor()">← Back to List</button>
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="qe-name" placeholder="e.g. 7A Reading Preferences">
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" id="qe-desc" placeholder="e.g. Questionnaire for Grade 7A">
+        </div>
+        <h3 style="margin:1rem 0 .5rem">Questions</h3>
+        <div id="qe-questions"></div>
+        <div class="flex gap-1 mt-2">
+          <button class="btn btn-outline btn-sm" onclick="addQuestion('multi')">+ Multi-choice</button>
+          <button class="btn btn-outline btn-sm" onclick="addQuestion('single')">+ Single-choice</button>
+          <button class="btn btn-outline btn-sm" onclick="addQuestion('text')">+ Text input</button>
+        </div>
+        <div class="flex gap-1 mt-3">
+          <button class="btn btn-primary" onclick="saveQuestionnaire()">Save Questionnaire</button>
+          <button class="btn btn-outline" onclick="closeQuestionnaireEditor()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Student responses viewer -->
+      <div class="mt-3">
+        <h3>Student Responses</h3>
+        <p class="text-muted mb-2" style="font-size:.9rem">View how students answered their class's questionnaire</p>
+        <div id="questionnaire-responses"></div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS TAB ===== -->
+    <div class="tab-content" id="tab-settings">
+      <h2>Settings</h2>
+      <div class="card">
+        <div class="form-group">
+          <label for="setting-appName">App Name</label>
+          <input type="text" id="setting-appName" placeholder="Book Recs">
+        </div>
+        <div class="form-group">
+          <label for="setting-schoolName">School Name</label>
+          <input type="text" id="setting-schoolName" placeholder="Enter school name">
+        </div>
+        <div class="form-group">
+          <label for="setting-room">Room / Class</label>
+          <input type="text" id="setting-room" placeholder="e.g. Room 204">
+        </div>
+        <div class="form-group">
+          <label for="setting-port">Server Port</label>
+          <div style="border:2px solid var(--danger);border-radius:var(--radius-sm);padding:1rem;background:rgba(239,71,111,.05)">
+            <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+              <span style="font-size:1.2rem">⚠️</span>
+              <strong style="color:var(--danger)">DO NOT CHANGE THIS SETTING</strong>
+            </div>
+            <input type="number" id="setting-port" min="1000" max="65535" value="8080" disabled>
+            <p class="help" style="color:var(--danger)">Changing the port will break your server unless you manually restart it and update all your links. Leave this at 8080.</p>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="setting-maxRecs">Max Recommendations per Student</label>
+          <input type="number" id="setting-maxRecs" min="1" max="50" value="10">
+        </div>
+        <div class="flex gap-1 mt-2">
+          <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+          <button class="btn btn-danger" onclick="resetAll()">Reset All Data</button>
+        </div>
+      </div>
+
+      <div class="card mt-2">
+        <h3>Change Admin Password</h3>
+        <div class="form-group">
+          <label for="old-pw">Current Password</label>
+          <input type="password" id="old-pw">
+        </div>
+        <div class="form-group">
+          <label for="new-pw">New Password</label>
+          <input type="password" id="new-pw">
+        </div>
+        <button class="btn btn-primary" onclick="changePassword()">Change Password</button>
+      </div>
+
+      <div class="card mt-2">
+        <h3>Appearance</h3>
+        <div class="flex gap-1">
+          <button class="btn btn-outline btn-sm" onclick="App.toggleDarkMode()">🌙 Toggle Dark Mode</button>
+          <button class="btn btn-outline btn-sm" onclick="document.body.classList.toggle('larger-text')">🔤 Larger Text</button>
+          <button class="btn btn-outline btn-sm" onclick="document.body.classList.toggle('dyslexia-font')">📖 Dyslexia Font</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ===== ADD/EDIT BOOK MODAL ===== -->
+  <div class="modal-overlay" id="book-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal('book-modal')">&times;</button>
+      <h2 id="book-modal-title">Add Book</h2>
+      <input type="hidden" id="book-edit-id">
+
+      <!-- Open Library search -->
+      <div class="card" style="background:rgba(67,97,238,.05);border-color:var(--primary);margin-bottom:1.25rem;padding:1rem">
+        <h3 style="margin-bottom:.5rem;font-size:.95rem">🔍 Search Open Library</h3>
+        <p class="text-muted" style="font-size:.8rem;margin-bottom:.5rem">Search by title or ISBN to auto-fill book details and cover</p>
+        <div style="display:flex;gap:.5rem">
+          <input type="text" id="ol-search-input" placeholder="e.g. Hatchet, 978-0689840920..." style="flex:1;padding:.5rem .8rem;border:2px solid var(--border);border-radius:var(--radius-sm);font-size:.9rem">
+          <button class="btn btn-primary btn-sm" id="ol-search-btn" onclick="searchOpenLibrary()">Search</button>
+        </div>
+        <div id="ol-results" style="margin-top:.75rem"></div>
+      </div>
+
+      <div class="form-group">
+        <label>Title *</label>
+        <input type="text" id="book-title" required>
+      </div>
+      <div class="form-group">
+        <label>Author *</label>
+        <input type="text" id="book-author" required>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="book-desc" rows="3"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Genres (comma-separated)</label>
+        <input type="text" id="book-genres" placeholder="Fantasy, Adventure, Humor">
+        <p class="help">Suggested: Fantasy, Sci-Fi, Mystery, Romance, Horror, Historical Fiction, Adventure, Realistic Fiction, Humor, Graphic Novels, Non-Fiction, Poetry</p>
+      </div>
+      <div class="form-group">
+        <label>Themes (comma-separated)</label>
+        <input type="text" id="book-themes" placeholder="Friendship, Coming of age, Survival">
+        <p class="help">Suggested: Friendship, Family, Identity, Justice, Survival, Coming of age, Technology, Nature, War & Conflict, Magic & Supernatural, Social Issues, Science</p>
+      </div>
+      <div class="form-group">
+        <label>Mood</label>
+        <select id="book-mood">
+          <option value="">Select...</option>
+          <option>Light and fun</option>
+          <option>Dark and intense</option>
+          <option>Thought-provoking</option>
+          <option>Emotional and heartfelt</option>
+          <option>Action-packed</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div class="form-group">
+          <label>Setting</label>
+          <select id="book-setting">
+            <option value="">Select...</option>
+            <option>Modern day</option>
+            <option>Medieval / old times</option>
+            <option>Futuristic / space</option>
+            <option>Small town</option>
+            <option>Big city</option>
+            <option>Wilderness / nature</option>
+            <option>School</option>
+            <option>Another world / fantasy realm</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Pace</label>
+          <select id="book-pace">
+            <option value="">Select...</option>
+            <option value="fast">Fast-paced</option>
+            <option value="slow">Slow build</option>
+            <option value="mixed">Mix of both</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div class="form-group">
+          <label>Pages</label>
+          <input type="number" id="book-pages" min="1">
+        </div>
+        <div class="form-group">
+          <label>Difficulty</label>
+          <select id="book-difficulty">
+            <option value="">Select...</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Cover Image URL</label>
+        <input type="text" id="book-cover" placeholder="https://...">
+      </div>
+      <div class="form-group">
+        <label>ISBN</label>
+        <input type="text" id="book-isbn" placeholder="978-...">
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="book-pick" style="width:auto;margin-right:.5rem"> ⭐ Teacher Pick</label>
+        <p class="help">Teacher picks are highlighted and get a recommendation boost</p>
+      </div>
+      <div class="flex gap-1 mt-2">
+        <button class="btn btn-primary" onclick="saveBook()">Save Book</button>
+        <button class="btn btn-outline" onclick="closeModal('book-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ADD STUDENT MODAL ===== -->
+  <div class="modal-overlay" id="student-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal('student-modal')">&times;</button>
+      <h2>Add Student</h2>
+      <div class="form-group">
+        <label>Display Name</label>
+        <input type="text" id="student-name" placeholder="e.g. Alex Johnson">
+      </div>
+      <div class="form-group">
+        <label>Class</label>
+        <select id="student-class">
+          <option value="">— No class —</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Unique Code</label>
+        <input type="text" id="student-code" placeholder="Leave blank to auto-generate" style="text-transform:uppercase">
+        <p class="help">Auto-generates a code like READ-7X2K if left blank</p>
+      </div>
+      <button class="btn btn-primary" onclick="saveStudent()">Add Student</button>
+    </div>
+  </div>
+
+  <!-- ===== BULK ADD STUDENTS MODAL ===== -->
+  <div class="modal-overlay" id="bulk-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal('bulk-modal')">&times;</button>
+      <h2>Bulk Add Students</h2>
+      <div class="form-group">
+        <label>Student Names (one per line)</label>
+        <textarea id="bulk-names" rows="8" placeholder="Alex Johnson\nMia Chen\nJamal Williams"></textarea>
+        <p class="help">Each student gets a unique auto-generated code and the default password</p>
+      </div>
+      <button class="btn btn-primary" onclick="bulkAddStudents()">Add All</button>
+      <div id="bulk-results" class="mt-2"></div>
+    </div>
+  </div>
+
+  <!-- ===== ADD/EDIT CLASS MODAL ===== -->
+  <div class="modal-overlay" id="class-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal('class-modal')">&times;</button>
+      <h2 id="class-modal-title">Add Class</h2>
+      <input type="hidden" id="class-edit-id">
+      <div class="form-group">
+        <label>Class Name *</label>
+        <input type="text" id="class-name" placeholder="e.g. 7A, 8B">
+      </div>
+      <div class="form-group">
+        <label>Assigned Questionnaire</label>
+        <select id="class-questionnaire">
+          <option value="">— Default questionnaire —</option>
+        </select>
+        <p class="help">Which questionnaire students in this class will see</p>
+      </div>
+      <button class="btn btn-primary" onclick="saveClass()">Save Class</button>
+    </div>
+  </div>
+
+  <!-- ===== VIEW PASSWORD MODAL ===== -->
+  <div class="modal-overlay" id="pw-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal('pw-modal')">&times;</button>
+      <h2>Student Credentials</h2>
+      <div id="pw-content"></div>
+    </div>
+  </div>
+
+  <!-- ===== PRINT HANDOUT MODAL ===== -->
+  <div class="modal-overlay" id="handout-modal">
+    <div class="modal" style="max-width:800px">
+      <button class="close-btn" onclick="closeModal('handout-modal')">&times;</button>
+      <h2>Print Handout</h2>
+      <p class="text-muted mb-2">Cut along the lines. Give each student their slip.</p>
+      <div id="handout-content"></div>
+      <div class="flex gap-1 mt-2 no-print">
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>
+        <button class="btn btn-outline" onclick="closeModal('handout-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container"></div>
+  <script src="/js/app.js"></script>
+  <script>
+    let stateData = null;
+    let editingQDefId = null; // currently editing questionnaire def
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      App.renderNav("admin");
+      const user = await App.requireAuth(["admin"]);
+      if (!user) return;
+
+      // Tab switching
+      document.querySelectorAll(".tab").forEach(tab => {
+        tab.addEventListener("click", () => {
+          document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+          document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+          tab.classList.add("active");
+          document.getElementById("tab-" + tab.dataset.tab).classList.add("active");
+        });
+      });
+
+      document.getElementById("book-search").addEventListener("input", renderBooksTable);
+      document.getElementById("book-filter-pick").addEventListener("change", renderBooksTable);
+
+      await loadAll();
+    });
+
+    async function loadAll() {
+      try {
+        const [st, settings] = await Promise.all([
+          App.api("/api/state"),
+          App.api("/api/settings"),
+        ]);
+        stateData = st;
+
+        renderBooksTable();
+        renderClassesTable();
+        renderStudentsTable();
+        renderQuestionnaireList();
+        renderRecsOverview();
+        renderQuestionnaireResponses();
+
+        const s = settings.settings;
+        document.getElementById("setting-appName").value = s.appName || "";
+        document.getElementById("setting-schoolName").value = s.schoolName || "";
+        document.getElementById("setting-room").value = s.room || "";
+        document.getElementById("setting-port").value = s.port || 8080;
+        document.getElementById("setting-maxRecs").value = s.maxRecsPerStudent || 10;
+      } catch (e) {
+        App.toast("Could not load data", "error");
+      }
+    }
+
+    /* ---- helpers ---- */
+    function getClassMap() {
+      const map = {};
+      (stateData.classes || []).forEach(c => map[c.id] = c);
+      return map;
+    }
+    function getQDefMap() {
+      const map = {};
+      (stateData.questionnaireDefs || []).forEach(q => map[q.id] = q);
+      return map;
+    }
+    function classOptions(selected) {
+      return '<option value="">— None —</option>' +
+        (stateData.classes || []).map(c =>
+          `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${c.name}</option>`
+        ).join("");
+    }
+    function qDefOptions(selected) {
+      return '<option value="">— Default —</option>' +
+        (stateData.questionnaireDefs || []).map(q =>
+          `<option value="${q.id}" ${q.id === selected ? 'selected' : ''}>${q.name}</option>`
+        ).join("");
+    }
+
+    /* ---- BOOKS ---- */
+    function renderBooksTable() {
+      const search = document.getElementById("book-search").value.toLowerCase();
+      const pickFilter = document.getElementById("book-filter-pick").value;
+      let books = (stateData.books || []).filter(b => {
+        const matchSearch = !search || b.title.toLowerCase().includes(search) || b.author.toLowerCase().includes(search);
+        const matchPick = !pickFilter || (pickFilter === "pick" ? b.teacherPick : !b.teacherPick);
+        return matchSearch && matchPick;
+      });
+
+      document.getElementById("books-table").innerHTML = books.map(b => `
+        <tr>
+          <td><strong>${b.title}</strong></td>
+          <td>${b.author}</td>
+          <td>${(b.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join(' ')}</td>
+          <td>${b.pages || '—'}</td>
+          <td>${b.difficulty || '—'}</td>
+          <td>${b.teacherPick ? '⭐' : '—'}</td>
+          <td>
+            <button class="btn btn-sm btn-outline" onclick='editBook("${b.id}")'>Edit</button>
+            <button class="btn btn-sm btn-danger" onclick='deleteBook("${b.id}")'>Delete</button>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function openAddBook() {
+      document.getElementById("book-modal-title").textContent = "Add Book";
+      document.getElementById("book-edit-id").value = "";
+      ["book-title","book-author","book-desc","book-genres","book-themes","book-cover","book-isbn"].forEach(id =>
+        document.getElementById(id).value = "");
+      document.getElementById("book-mood").value = "";
+      document.getElementById("book-setting").value = "";
+      document.getElementById("book-pace").value = "";
+      document.getElementById("book-pages").value = "";
+      document.getElementById("book-difficulty").value = "";
+      document.getElementById("book-pick").checked = false;
+      openModal("book-modal");
+    }
+
+    function editBook(id) {
+      const book = (stateData.books || []).find(b => b.id === id);
+      if (!book) return;
+      document.getElementById("book-modal-title").textContent = "Edit Book";
+      document.getElementById("book-edit-id").value = id;
+      document.getElementById("book-title").value = book.title;
+      document.getElementById("book-author").value = book.author;
+      document.getElementById("book-desc").value = book.description || "";
+      document.getElementById("book-genres").value = (book.genres || []).join(", ");
+      document.getElementById("book-themes").value = (book.themes || []).join(", ");
+      document.getElementById("book-mood").value = book.mood || "";
+      document.getElementById("book-setting").value = book.setting || "";
+      document.getElementById("book-pace").value = book.pace || "";
+      document.getElementById("book-pages").value = book.pages || "";
+      document.getElementById("book-difficulty").value = book.difficulty || "";
+      document.getElementById("book-cover").value = book.coverUrl || "";
+      document.getElementById("book-isbn").value = book.isbn || "";
+      document.getElementById("book-pick").checked = !!book.teacherPick;
+      openModal("book-modal");
+    }
+
+    async function saveBook() {
+      const editId = document.getElementById("book-edit-id").value;
+      const book = {
+        id: editId || "book-" + Date.now(),
+        title: document.getElementById("book-title").value.trim(),
+        author: document.getElementById("book-author").value.trim(),
+        description: document.getElementById("book-desc").value.trim(),
+        genres: document.getElementById("book-genres").value.split(",").map(s => s.trim()).filter(Boolean),
+        themes: document.getElementById("book-themes").value.split(",").map(s => s.trim()).filter(Boolean),
+        mood: document.getElementById("book-mood").value,
+        setting: document.getElementById("book-setting").value,
+        pace: document.getElementById("book-pace").value,
+        pages: parseInt(document.getElementById("book-pages").value) || null,
+        difficulty: document.getElementById("book-difficulty").value,
+        coverUrl: document.getElementById("book-cover").value.trim(),
+        isbn: document.getElementById("book-isbn").value.trim(),
+        teacherPick: document.getElementById("book-pick").checked,
+        approved: true,
+        addedBy: App.me.id,
+        addedAt: editId ? ((stateData.books||[]).find(b=>b.id===editId)||{}).addedAt || Date.now() : Date.now(),
+      };
+
+      if (!book.title || !book.author) return App.toast("Title and author are required", "error");
+
+      if (editId) {
+        stateData.books = stateData.books.map(b => b.id === editId ? book : b);
+      } else {
+        stateData.books.push(book);
+      }
+
+      try {
+        await App.postState(stateData);
+        App.toast(editId ? "Book updated" : "Book added", "success");
+        closeModal("book-modal");
+        renderBooksTable();
+      } catch (e) {}
+    }
+
+    async function deleteBook(id) {
+      if (!confirm("Delete this book?")) return;
+      stateData.books = stateData.books.filter(b => b.id !== id);
+      try {
+        await App.postState(stateData);
+        App.toast("Book deleted", "success");
+        renderBooksTable();
+      } catch (e) {}
+    }
+
+    /* ---- CLASSES ---- */
+    function renderClassesTable() {
+      const classMap = getClassMap();
+      const qDefMap = getQDefMap();
+      const students = (stateData.users || []).filter(u => u.role === "student");
+
+      document.getElementById("classes-table").innerHTML = (stateData.classes || []).map(c => {
+        const qDef = qDefMap[c.questionnaireId];
+        const count = students.filter(s => s.classId === c.id).length;
+        return `
+          <tr>
+            <td><strong>${c.name}</strong></td>
+            <td>${qDef ? qDef.name : '<span class="text-muted">Default</span>'}</td>
+            <td>${count} student${count !== 1 ? 's' : ''}</td>
+            <td>
+              <button class="btn btn-sm btn-outline" onclick='editClass("${c.id}")'>Edit</button>
+              <button class="btn btn-sm btn-danger" onclick='deleteClass("${c.id}")'>Delete</button>
+            </td>
+          </tr>`;
+      }).join("");
+    }
+
+    function openAddClass() {
+      document.getElementById("class-modal-title").textContent = "Add Class";
+      document.getElementById("class-edit-id").value = "";
+      document.getElementById("class-name").value = "";
+      document.getElementById("class-questionnaire").innerHTML = qDefOptions("");
+      openModal("class-modal");
+    }
+
+    function editClass(id) {
+      const cls = (stateData.classes || []).find(c => c.id === id);
+      if (!cls) return;
+      document.getElementById("class-modal-title").textContent = "Edit Class";
+      document.getElementById("class-edit-id").value = id;
+      document.getElementById("class-name").value = cls.name;
+      document.getElementById("class-questionnaire").innerHTML = qDefOptions(cls.questionnaireId);
+      openModal("class-modal");
+    }
+
+    async function saveClass() {
+      const editId = document.getElementById("class-edit-id").value;
+      const name = document.getElementById("class-name").value.trim();
+      if (!name) return App.toast("Class name is required", "error");
+
+      const cls = {
+        id: editId || "class-" + Date.now(),
+        name,
+        questionnaireId: document.getElementById("class-questionnaire").value || "",
+      };
+
+      stateData.classes = stateData.classes || [];
+      if (editId) {
+        stateData.classes = stateData.classes.map(c => c.id === editId ? cls : c);
+      } else {
+        stateData.classes.push(cls);
+      }
+
+      try {
+        await App.postState(stateData);
+        App.toast(editId ? "Class updated" : "Class added", "success");
+        closeModal("class-modal");
+        renderClassesTable();
+        renderStudentsTable();
+      } catch (e) {}
+    }
+
+    async function deleteClass(id) {
+      if (!confirm("Delete this class? Students in this class will be unassigned.")) return;
+      stateData.classes = (stateData.classes || []).filter(c => c.id !== id);
+      // Unassign students from this class
+      (stateData.users || []).forEach(u => { if (u.classId === id) u.classId = ""; });
+      try {
+        await App.postState(stateData);
+        App.toast("Class deleted", "success");
+        renderClassesTable();
+        renderStudentsTable();
+      } catch (e) {}
+    }
+
+    /* ---- STUDENTS ---- */
+    function generateCode() {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let code = "READ-";
+      for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+      return code;
+    }
+
+    function renderStudentsTable() {
+      const students = (stateData.users || []).filter(u => u.role === "student");
+      const responses = stateData.responses || [];
+      const classMap = getClassMap();
+
+      document.getElementById("students-table").innerHTML = students.map(s => {
+        const userResponses = responses.filter(q => q.userId === s.id);
+        const hasQ = userResponses.length > 0;
+        const cls = classMap[s.classId];
+        return `
+          <tr>
+            <td><code style="font-size:1.1rem;letter-spacing:.05em">${s.code}</code></td>
+            <td>${s.displayName || '—'}</td>
+            <td>
+              <select style="padding:.2rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem" onchange="assignStudentClass('${s.id}', this.value)">
+                ${classOptions(s.classId || "")}
+              </select>
+            </td>
+            <td>${hasQ ? '✅ Done' : '❌ Not done'}</td>
+            <td>
+              <button class="btn btn-sm btn-outline" onclick='printHandout([{name:"${(s.displayName||'').replace(/"/g,'&quot;')}",code:"${s.code}"}])'>📋 Print Slip</button>
+              ${hasQ ? `<button class="btn btn-sm btn-warning" onclick='clearStudentRecs("${s.id}")'>🗑️ Clear Recs</button>` : ''}
+              <button class="btn btn-sm btn-danger" onclick='deleteStudent("${s.id}")'>✕</button>
+            </td>
+          </tr>`;
+      }).join("");
+    }
+
+    async function assignStudentClass(studentId, classId) {
+      const student = (stateData.users || []).find(u => u.id === studentId);
+      if (!student) return;
+      student.classId = classId;
+      try {
+        await App.postState(stateData);
+        App.toast("Class assigned", "success");
+      } catch (e) {}
+    }
+
+    function openAddStudent() {
+      document.getElementById("student-name").value = "";
+      document.getElementById("student-code").value = "";
+      document.getElementById("student-class").innerHTML = classOptions("");
+      openModal("student-modal");
+    }
+
+    async function saveStudent() {
+      const name = document.getElementById("student-name").value.trim();
+      const code = document.getElementById("student-code").value.trim().toUpperCase() || generateCode();
+
+      // Check for duplicate code
+      if ((stateData.users || []).find(u => u.code === code)) {
+        return App.toast("Code already exists", "error");
+      }
+
+      const classId = document.getElementById("student-class").value;
+      const student = {
+        id: "student-" + Date.now(),
+        code,
+        displayName: name,
+        role: "student",
+        classId: classId || "",
+      };
+
+      stateData.users = stateData.users || [];
+      stateData.users.push(student);
+
+      try {
+        await App.postState(stateData);
+        App.toast(`Student added! Code: ${code}`, "success");
+        closeModal("student-modal");
+        renderStudentsTable();
+      } catch (e) {}
+    }
+
+    function openBulkAdd() {
+      document.getElementById("bulk-names").value = "";
+      document.getElementById("bulk-results").innerHTML = "";
+      // Add class dropdown to bulk modal if not present
+      let bulkClassEl = document.getElementById("bulk-class");
+      if (!bulkClassEl) {
+        const fg = document.createElement("div");
+        fg.className = "form-group";
+        fg.innerHTML = `<label>Assign to Class</label><select id="bulk-class">${classOptions("")}</select><p class="help">All students below will be assigned to this class</p>`;
+        document.getElementById("bulk-names").parentElement.insertBefore(fg, document.getElementById("bulk-names"));
+      } else {
+        bulkClassEl.innerHTML = classOptions("");
+      }
+      openModal("bulk-modal");
+    }
+
+    async function bulkAddStudents() {
+      const names = document.getElementById("bulk-names").value
+        .split("\n")
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      if (!names.length) return App.toast("Enter at least one name", "error");
+
+      const bulkClassId = (document.getElementById("bulk-class") || {}).value || "";
+      const added = [];
+      names.forEach(name => {
+        const code = generateCode();
+        stateData.users.push({
+          id: "student-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+          code,
+          displayName: name,
+          role: "student",
+          classId: bulkClassId,
+        });
+        added.push({ name, code });
+      });
+
+      try {
+        await App.postState(stateData);
+        App.toast(`${added.length} students added`, "success");
+        renderStudentsTable();
+
+        document.getElementById("bulk-results").innerHTML = `
+          <h3>Added ${added.length} students:</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th>Code</th></tr></thead>
+              <tbody>${added.map(s => `<tr><td>${s.name}</td><td><code>${s.code}</code></td></tr>`).join("")}</tbody>
+            </table>
+          </div>
+          <button class="btn btn-primary mt-2" onclick="printHandout(${JSON.stringify(added).replace(/"/g, '&quot;')})">🖨️ Print Handout</button>
+        `;
+      } catch (e) {}
+    }
+
+    function printAllSlips() {
+      const students = (stateData.users || []).filter(u => u.role === "student");
+      if (!students.length) return App.toast("No students to print", "error");
+      const classMap = getClassMap();
+      const list = students.map(s => ({
+        name: s.displayName || "",
+        code: s.code,
+        className: classMap[s.classId] ? classMap[s.classId].name : "",
+      }));
+      printHandout(list);
+    }
+
+    function printHandout(students) {
+      const html = students.map(s => `
+        <div class="slip">
+          <div class="slip-header">${s.className ? s.className + ' — ' : ''}${s.name || 'Student'}</div>
+          <div class="slip-code">${s.code}</div>
+          <div class="slip-url">Sign in at the class page and enter this code</div>
+        </div>
+      `).join("");
+      document.getElementById("handout-content").innerHTML = html;
+      openModal("handout-modal");
+    }
+
+    async function clearStudentRecs(id) {
+      const student = (stateData.users || []).find(u => u.id === id);
+      if (!student) return;
+      if (!confirm(`Clear questionnaire responses and recommendations for ${student.displayName || student.code}?`)) return;
+      stateData.responses = (stateData.responses || []).filter(q => q.userId !== id);
+      try {
+        await App.postState(stateData);
+        App.toast("Responses cleared — student can retake the questionnaire", "success");
+        renderStudentsTable();
+        renderRecsOverview();
+        renderQuestionnaireResponses();
+      } catch (e) {}
+    }
+
+    async function deleteStudent(id) {
+      if (!confirm("Delete this student? Their responses will also be removed.")) return;
+      stateData.users = stateData.users.filter(u => u.id !== id);
+      stateData.responses = (stateData.responses || []).filter(q => q.userId !== id);
+      try {
+        await App.postState(stateData);
+        App.toast("Student deleted", "success");
+        renderStudentsTable();
+      } catch (e) {}
+    }
+
+    /* ---- QUESTIONNAIRE EDITOR ---- */
+    function renderQuestionnaireList() {
+      const classMap = getClassMap();
+      const defs = stateData.questionnaireDefs || [];
+
+      document.getElementById("questionnaire-list").innerHTML = defs.length
+        ? defs.map(q => {
+            const assignedClasses = (stateData.classes || []).filter(c => c.questionnaireId === q.id);
+            return `
+              <div class="card" style="cursor:pointer" onclick='editQuestionnaire("${q.id}")'>
+                <div class="flex justify-between items-center">
+                  <div>
+                    <h3 style="margin-bottom:.25rem">${q.name}</h3>
+                    <p class="text-muted" style="font-size:.85rem">${q.description || ''} · ${(q.questions||[]).length} questions</p>
+                  </div>
+                  <div>
+                    ${assignedClasses.length
+                      ? assignedClasses.map(c => `<span class="genre-tag">${c.name}</span>`).join(' ')
+                      : '<span class="text-muted" style="font-size:.8rem">Not assigned</span>'}
+                    <button class="btn btn-sm btn-outline" style="margin-left:.5rem" onclick="event.stopPropagation();editQuestionnaire('${q.id}')">Edit</button>
+                    <button class="btn btn-sm btn-danger" style="margin-left:.25rem" onclick="event.stopPropagation();deleteQuestionnaire('${q.id}')">Delete</button>
+                  </div>
+                </div>
+              </div>`;
+          }).join("")
+        : '<div class="empty-state"><div class="icon">📝</div><h3>No questionnaires yet</h3><p class="text-muted">Create a questionnaire to get started</p></div>';
+    }
+
+    function openAddQuestionnaire() {
+      editingQDefId = null;
+      document.getElementById("qe-title").textContent = "New Questionnaire";
+      document.getElementById("qe-name").value = "";
+      document.getElementById("qe-desc").value = "";
+      window._editingQuestions = JSON.parse(JSON.stringify(DEFAULT_QUESTIONS));
+      renderQuestionEditor();
+      document.getElementById("questionnaire-list").style.display = "none";
+      document.getElementById("questionnaire-editor").style.display = "";
+    }
+
+    function editQuestionnaire(id) {
+      const qDef = (stateData.questionnaireDefs || []).find(q => q.id === id);
+      if (!qDef) return;
+      editingQDefId = id;
+      document.getElementById("qe-title").textContent = "Edit: " + qDef.name;
+      document.getElementById("qe-name").value = qDef.name;
+      document.getElementById("qe-desc").value = qDef.description || "";
+      window._editingQuestions = JSON.parse(JSON.stringify(qDef.questions || []));
+      renderQuestionEditor();
+      document.getElementById("questionnaire-list").style.display = "none";
+      document.getElementById("questionnaire-editor").style.display = "";
+    }
+
+    function closeQuestionnaireEditor() {
+      editingQDefId = null;
+      document.getElementById("questionnaire-editor").style.display = "none";
+      document.getElementById("questionnaire-list").style.display = "";
+    }
+
+    function renderQuestionEditor() {
+      const questions = window._editingQuestions;
+      document.getElementById("qe-questions").innerHTML = questions.map((q, i) => {
+        let optsHtml = '';
+        if (q.type === "multi" || q.type === "single") {
+          optsHtml = `
+            <div class="form-group" style="margin-top:.5rem">
+              <label style="font-size:.85rem">Options (one per line)</label>
+              <textarea class="qe-opts" data-idx="${i}" rows="3" style="font-size:.9rem">${(q.options||[]).join("\n")}</textarea>
+            </div>`;
+        }
+        return `
+          <div class="card" style="padding:1rem;margin-bottom:.75rem;border-left:4px solid var(--primary)">
+            <div class="flex justify-between items-center mb-1">
+              <span style="font-size:.8rem;color:var(--text-muted)">${i+1}. ${q.type === 'multi' ? '☑ Multi-choice' : q.type === 'single' ? '◉ Single-choice' : '✎ Text'}</span>
+              <div>
+                ${i > 0 ? `<button class="btn btn-sm btn-outline" onclick="moveQuestion(${i},-1)">↑</button>` : ''}
+                ${i < questions.length-1 ? `<button class="btn btn-sm btn-outline" onclick="moveQuestion(${i},1)">↓</button>` : ''}
+                <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">✕</button>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <input type="text" class="qe-qtext" data-idx="${i}" value="${q.question}" style="font-weight:600" placeholder="Question text">
+            </div>
+            ${optsHtml}
+          </div>`;
+      }).join("");
+    }
+
+    function addQuestion(type) {
+      window._editingQuestions = window._editingQuestions || [];
+      const q = { id: "q_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), question: "", type };
+      if (type === "multi" || type === "single") q.options = ["Option 1", "Option 2"];
+      window._editingQuestions.push(q);
+      renderQuestionEditor();
+    }
+
+    function removeQuestion(idx) {
+      window._editingQuestions.splice(idx, 1);
+      renderQuestionEditor();
+    }
+
+    function moveQuestion(idx, dir) {
+      const arr = window._editingQuestions;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= arr.length) return;
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      renderQuestionEditor();
+    }
+
+    async function saveQuestionnaire() {
+      const name = document.getElementById("qe-name").value.trim();
+      if (!name) return App.toast("Name is required", "error");
+
+      // Read current values from editor inputs
+      const questions = window._editingQuestions.map((q, i) => {
+        const textEl = document.querySelector(`.qe-qtext[data-idx="${i}"]`);
+        const updated = { ...q, question: textEl ? textEl.value : q.question };
+        if (q.type === "multi" || q.type === "single") {
+          const optsEl = document.querySelector(`.qe-opts[data-idx="${i}"]`);
+          if (optsEl) updated.options = optsEl.value.split("\n").map(s => s.trim()).filter(Boolean);
+        }
+        return updated;
+      }).filter(q => q.question.trim());
+
+      if (!questions.length) return App.toast("Add at least one question", "error");
+
+      const qDef = {
+        id: editingQDefId || "q-" + Date.now(),
+        name,
+        description: document.getElementById("qe-desc").value.trim(),
+        questions,
+      };
+
+      stateData.questionnaireDefs = stateData.questionnaireDefs || [];
+      if (editingQDefId) {
+        stateData.questionnaireDefs = stateData.questionnaireDefs.map(q => q.id === editingQDefId ? qDef : q);
+      } else {
+        stateData.questionnaireDefs.push(qDef);
+      }
+
+      try {
+        await App.postState(stateData);
+        App.toast("Questionnaire saved!", "success");
+        closeQuestionnaireEditor();
+        renderQuestionnaireList();
+        renderClassesTable(); // class assignments may have changed
+      } catch (e) {}
+    }
+
+    async function deleteQuestionnaire(id) {
+      if (!confirm("Delete this questionnaire? Classes using it will fall back to the default.")) return;
+      stateData.questionnaireDefs = (stateData.questionnaireDefs || []).filter(q => q.id !== id);
+      // Clear references from classes
+      (stateData.classes || []).forEach(c => { if (c.questionnaireId === id) c.questionnaireId = ""; });
+      try {
+        await App.postState(stateData);
+        App.toast("Questionnaire deleted", "success");
+        renderQuestionnaireList();
+        renderClassesTable();
+      } catch (e) {}
+    }
+
+    /* ---- RECOMMENDATIONS OVERVIEW ---- */
+    function renderRecsOverview() {
+      const students = (stateData.users || []).filter(u => u.role === "student");
+      const responses = stateData.responses || [];
+      const classMap = getClassMap();
+
+      if (!students.length) {
+        document.getElementById("recs-overview").innerHTML = '<div class="empty-state"><div class="icon">👩‍🎓</div><h3>No students yet</h3><p>Add students to see their recommendations</p></div>';
+        return;
+      }
+
+      let html = '';
+      students.forEach(s => {
+        const userResponses = responses.filter(q => q.userId === s.id);
+        const cls = classMap[s.classId];
+        const genres = userResponses.find(q => q.questionId === "genres");
+        const mood = userResponses.find(q => q.questionId === "mood");
+        html += `
+          <div class="card">
+            <h3>${s.displayName || s.code} <code style="font-size:.85rem">${s.code}</code>
+              ${cls ? `<span class="genre-tag" style="margin-left:.5rem">${cls.name}</span>` : ''}
+            </h3>
+            ${userResponses.length ? `
+              <p class="text-muted" style="font-size:.9rem">
+                ${genres ? 'Likes: ' + (Array.isArray(genres.answer) ? genres.answer.join(', ') : genres.answer) : ''}
+                ${mood ? ' · Mood: ' + mood.answer : ''}
+              </p>
+              <p class="mt-1" style="font-size:.85rem;color:var(--success)">✅ Completed questionnaire</p>
+            ` : '<p class="text-muted">Hasn\'t completed the questionnaire yet</p>'}
+          </div>`;
+      });
+
+      document.getElementById("recs-overview").innerHTML = html;
+    }
+
+    function viewRecsForStudent(id) {
+      // Switch to recs tab and highlight
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+      document.querySelector('[data-tab="recs"]').classList.add("active");
+      document.getElementById("tab-recs").classList.add("active");
+      renderRecsOverview();
+    }
+
+    /* ---- QUESTIONNAIRE RESPONSES ---- */
+    function renderQuestionnaireResponses() {
+      const students = (stateData.users || []).filter(u => u.role === "student");
+      const responses = stateData.responses || [];
+      const classMap = getClassMap();
+      const qDefMap = getQDefMap();
+
+      if (!students.length) {
+        document.getElementById("questionnaire-responses").innerHTML = '<div class="empty-state"><div class="icon">📝</div><h3>No responses yet</h3></div>';
+        return;
+      }
+
+      let html = '';
+      students.forEach(s => {
+        const userResponses = responses.filter(q => q.userId === s.id);
+        const cls = classMap[s.classId];
+        if (!userResponses.length) {
+          html += `<div class="card"><h3>${s.displayName || s.code} ${cls ? `<span class="genre-tag">${cls.name}</span>` : ''}</h3><p class="text-muted">No responses</p></div>`;
+          return;
+        }
+
+        // Build question label map from the student's class questionnaire
+        const qMap = {};
+        if (cls && cls.questionnaireId) {
+          const qDef = qDefMap[cls.questionnaireId];
+          if (qDef) (qDef.questions || []).forEach(q => qMap[q.id] = q.question);
+        }
+        // Fallback to default questions
+        DEFAULT_QUESTIONS.forEach(q => { if (!qMap[q.id]) qMap[q.id] = q.question; });
+
+        html += `<div class="card"><h3>${s.displayName || s.code} ${cls ? `<span class="genre-tag">${cls.name}</span>` : ''}</h3>`;
+        userResponses.forEach(q => {
+          const label = qMap[q.questionId] || q.questionId;
+          const value = Array.isArray(q.answer) ? q.answer.join(', ') : q.answer;
+          html += `<div style="margin:.5rem 0"><strong>${label}</strong><br><span class="text-muted">${value || '(empty)'}</span></div>`;
+        });
+        html += '</div>';
+      });
+
+      document.getElementById("questionnaire-responses").innerHTML = html;
+    }
+
+    /* ---- SETTINGS ---- */
+    async function saveSettings() {
+      try {
+        await App.api("/api/settings", { method: "GET" }); // verify admin
+        const oldPort = stateData.settings.port || 8080;
+        const newPort = parseInt(document.getElementById("setting-port").value) || 8080;
+        stateData.settings = {
+          appName: document.getElementById("setting-appName").value,
+          schoolName: document.getElementById("setting-schoolName").value,
+          room: document.getElementById("setting-room").value,
+          port: newPort,
+          maxRecsPerStudent: parseInt(document.getElementById("setting-maxRecs").value) || 10,
+        };
+        await App.postState(stateData);
+        App.toast("Settings saved" + (newPort !== oldPort ? " — restart server to apply new port" : ""), "success");
+      } catch (e) {}
+    }
+
+    async function changePassword() {
+      const oldPw = document.getElementById("old-pw").value;
+      const newPw = document.getElementById("new-pw").value;
+      if (!oldPw || !newPw) return App.toast("Both fields required", "error");
+      try {
+        await App.api("/api/change-password", {
+          method: "POST",
+          body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }),
+        });
+        App.toast("Password changed", "success");
+        document.getElementById("old-pw").value = "";
+        document.getElementById("new-pw").value = "";
+      } catch (e) {}
+    }
+
+    async function resetAll() {
+      if (!confirm("This will delete ALL data and restore demo books and admin account. Continue?")) return;
+      if (!confirm("Are you really sure? This cannot be undone.")) return;
+      try {
+        await App.api("/api/reset", { method: "POST" });
+        App.toast("All data reset", "success");
+        await loadAll();
+      } catch (e) {}
+    }
+
+    /* ---- modal helpers ---- */
+    function openModal(id) { document.getElementById(id).classList.add("open"); }
+    function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+
+    // Close modals on overlay click
+    document.querySelectorAll(".modal-overlay").forEach(overlay => {
+      overlay.addEventListener("click", e => {
+        if (e.target === overlay) overlay.classList.remove("open");
+      });
+    });
+
+    /* ---- Open Library integration ---- */
+    let olSearchDebounce = null;
+    document.getElementById("ol-search-input").addEventListener("input", () => {
+      clearTimeout(olSearchDebounce);
+      olSearchDebounce = setTimeout(searchOpenLibrary, 500);
+    });
+    document.getElementById("ol-search-input").addEventListener("keydown", e => {
+      if (e.key === "Enter") { clearTimeout(olSearchDebounce); searchOpenLibrary(); }
+    });
+
+    async function searchOpenLibrary() {
+      const q = document.getElementById("ol-search-input").value.trim();
+      const container = document.getElementById("ol-results");
+      if (!q) { container.innerHTML = ""; return; }
+
+      container.innerHTML = '<p class="text-muted" style="font-size:.85rem">Searching Open Library...</p>';
+      document.getElementById("ol-search-btn").disabled = true;
+
+      try {
+        // Call Open Library directly from the browser (not via server proxy)
+        const res = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=8&fields=key,title,author_name,first_publish_year,isbn,number_of_pages_median,subject,publisher,cover_i,edition_key`);
+        const data = await res.json();
+        const docs = data.docs || [];
+        const results = docs.map(doc => ({
+          title: doc.title || "",
+          author: (doc.author_name || []).join(", "),
+          year: doc.first_publish_year || null,
+          isbn: (doc.isbn || [])[0] || "",
+          pages: doc.number_of_pages_median || null,
+          subjects: (doc.subject || []).slice(0, 15),
+          publisher: (doc.publisher || [])[0] || "",
+          coverId: doc.cover_i || null,
+          coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : "",
+          openLibraryKey: doc.key || "",
+        }));
+
+        if (!results.length) {
+          container.innerHTML = '<p class="text-muted" style="font-size:.85rem">No results found. Try a different search.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:.5rem">
+            ${results.map((r, i) => `
+              <div class="ol-result" style="display:flex;gap:.75rem;padding:.6rem;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:background .15s"
+                   onmouseenter="this.style.background='rgba(67,97,238,.06)'"
+                   onmouseleave="this.style.background=''"
+                   onclick="pickOLResult(${i})">
+                ${r.coverUrl
+                  ? `<img src="${r.coverUrl}" alt="" style="width:40px;height:55px;object-fit:cover;border-radius:4px;flex-shrink:0">`
+                  : `<div style="width:40px;height:55px;background:var(--border);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:.7rem;color:var(--text-muted)">📖</div>`}
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.title}</div>
+                  <div style="font-size:.75rem;color:var(--text-muted)">${r.author || 'Unknown'}${r.year ? ' · ' + r.year : ''}${r.pages ? ' · ' + r.pages + ' pages' : ''}</div>
+                </div>
+                <button class="btn btn-sm btn-outline" style="flex-shrink:0;align-self:center" onclick="event.stopPropagation();pickOLResult(${i})">Use</button>
+              </div>
+            `).join("")}
+          </div>
+        `;
+
+        window._olResults = results;
+      } catch (e) {
+        console.error("Open Library search error:", e);
+        container.innerHTML = '<p style="color:var(--danger);font-size:.85rem">Search failed. Check your connection and try again.</p>';
+      } finally {
+        document.getElementById("ol-search-btn").disabled = false;
+      }
+    }
+
+    async function pickOLResult(index) {
+      const r = window._olResults[index];
+      if (!r) return;
+
+      // Auto-fill form fields
+      document.getElementById("book-title").value = r.title || "";
+      document.getElementById("book-author").value = r.author || "";
+      document.getElementById("book-isbn").value = r.isbn || "";
+      if (r.pages) document.getElementById("book-pages").value = r.pages;
+
+      // Map Open Library subjects to our genres and themes
+      const subjects = (r.subjects || []).map(s => s.toLowerCase());
+      const genreMap = {
+        "fantasy": "Fantasy", "science fiction": "Sci-Fi", "sci-fi": "Sci-Fi",
+        "mystery": "Mystery", "romance": "Romance", "horror": "Horror",
+        "historical fiction": "Historical Fiction", "adventure": "Adventure",
+        "adventure stories": "Adventure", "adventure fiction": "Adventure",
+        "realistic fiction": "Realistic Fiction", "humor": "Humor",
+        "humorous stories": "Humor", "graphic novels": "Graphic Novels",
+        "comics": "Graphic Novels", "non-fiction": "Non-Fiction",
+        "nonfiction": "Non-Fiction", "poetry": "Poetry",
+      };
+      const themeMap = {
+        "friendship": "Friendship", "family": "Family", "identity": "Identity",
+        "justice": "Justice", "survival": "Survival", "coming of age": "Coming of age",
+        "technology": "Technology", "nature": "Nature",
+        "war": "War & Conflict", "war stories": "War & Conflict",
+        "magic": "Magic & Supernatural", "supernatural": "Magic & Supernatural",
+        "social issues": "Social Issues", "science": "Science",
+      };
+
+      const matchedGenres = new Set();
+      const matchedThemes = new Set();
+      subjects.forEach(s => {
+        Object.keys(genreMap).forEach(k => { if (s.includes(k)) matchedGenres.add(genreMap[k]); });
+        Object.keys(themeMap).forEach(k => { if (s.includes(k)) matchedThemes.add(themeMap[k]); });
+      });
+      if (matchedGenres.size) document.getElementById("book-genres").value = [...matchedGenres].join(", ");
+      if (matchedThemes.size) document.getElementById("book-themes").value = [...matchedThemes].join(", ");
+
+      // Set cover URL directly from Open Library
+      if (r.coverUrl) {
+        document.getElementById("book-cover").value = r.coverUrl;
+      }
+
+      // Fetch full description from work page if available
+      if (r.openLibraryKey) {
+        document.getElementById("book-desc").value = "Loading description from Open Library...";
+        try {
+          const workRes = await fetch(`https://openlibrary.org${r.openLibraryKey}.json`);
+          const workData = await workRes.json();
+          if (workData.description) {
+            document.getElementById("book-desc").value = workData.description;
+          } else {
+            document.getElementById("book-desc").value = "";
+          }
+          // Merge any additional subjects from the work page
+          if (workData.subjects && workData.subjects.length) {
+            workData.subjects.forEach(s => {
+              const sl = s.toLowerCase();
+              Object.keys(genreMap).forEach(k => { if (sl.includes(k)) matchedGenres.add(genreMap[k]); });
+              Object.keys(themeMap).forEach(k => { if (sl.includes(k)) matchedThemes.add(themeMap[k]); });
+            });
+            document.getElementById("book-genres").value = [...matchedGenres].join(", ");
+            document.getElementById("book-themes").value = [...matchedThemes].join(", ");
+          }
+          // If we got a cover from work data and don't have one yet
+          if (workData.covers && workData.covers.length && !r.coverUrl) {
+            document.getElementById("book-cover").value = `https://covers.openlibrary.org/b/id/${workData.covers[0]}-L.jpg`;
+          }
+        } catch (e) {
+          document.getElementById("book-desc").value = "";
+        }
+      }
+
+      // Clear results
+      document.getElementById("ol-results").innerHTML = `
+        <div style="display:flex;align-items:center;gap:.5rem;padding:.4rem .6rem;background:rgba(6,214,160,.1);border-radius:var(--radius-sm);font-size:.85rem;color:var(--success)">
+          ✅ Imported: ${r.title}
+        </div>
+      `;
+
+      App.toast(`Imported "${r.title}" from Open Library`, "success");
+    }
+  </script>
+</body>
+</html>

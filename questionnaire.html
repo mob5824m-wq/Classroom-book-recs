@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Tastes — Book Recs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-active-page="questionnaire">
+  <header class="top-bar"></header>
+
+  <main class="container">
+    <div class="card">
+      <h1 style="margin-bottom:.5rem">📝 Tell Us Your Tastes</h1>
+      <p class="text-muted mb-2">Answer these questions so we can recommend books you'll love!</p>
+
+      <div class="quest-progress" id="progress"></div>
+
+      <div id="question-container"></div>
+
+      <div class="quest-nav">
+        <button class="btn btn-outline" id="prev-btn" onclick="navigate(-1)">← Previous</button>
+        <span id="step-label" class="text-muted" style="align-self:center"></span>
+        <button class="btn btn-primary" id="next-btn" onclick="navigate(1)">Next →</button>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-container"></div>
+  <script src="/js/app.js"></script>
+  <script>
+    let questions = [];
+    let answers = {};
+    let current = 0;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      App.renderNav("questionnaire");
+      const user = await App.requireAuth(["student"]);
+      if (!user) return;
+
+      try {
+        const data = await App.api("/api/questionnaire");
+        questions = data.questions;
+        // Load existing answers
+        (data.answers || []).forEach(a => {
+          answers[a.questionId] = a.answer;
+        });
+        // Show class name if available
+        if (data.className) {
+          document.querySelector("h1").textContent = `📝 ${data.className} — Tell Us Your Tastes`;
+        }
+        render();
+      } catch (e) {
+        App.toast("Could not load questionnaire", "error");
+      }
+    });
+
+    function render() {
+      // Progress bar
+      document.getElementById("progress").innerHTML = questions.map((q, i) =>
+        `<div class="step ${i < current ? 'done' : i === current ? 'active' : ''}"></div>`
+      ).join("");
+
+      document.getElementById("step-label").textContent = `${current + 1} of ${questions.length}`;
+
+      const q = questions[current];
+      if (!q) return;
+
+      let inputHtml = '';
+      if (q.type === "single") {
+        inputHtml = `<div class="radio-group">${q.options.map(o =>
+          `<label><input type="radio" name="q_${q.id}" value="${o}" ${answers[q.id] === o ? 'checked' : ''}> ${o}</label>`
+        ).join('')}</div>`;
+      } else if (q.type === "multi") {
+        const selected = Array.isArray(answers[q.id]) ? answers[q.id] : [];
+        inputHtml = `<div class="checkbox-group">${q.options.map(o =>
+          `<label><input type="checkbox" name="q_${q.id}" value="${o}" ${selected.includes(o) ? 'checked' : ''}> ${o}</label>`
+        ).join('')}</div>`;
+      } else if (q.type === "text") {
+        inputHtml = `<input type="text" id="text_${q.id}" value="${answers[q.id] || ''}" placeholder="Type your answer..." class="w-full" style="padding:.6rem .8rem;border:2px solid var(--border);border-radius:var(--radius-sm);font-size:1rem">`;
+      }
+
+      document.getElementById("question-container").innerHTML = `
+        <div class="quest-question">${q.question}</div>
+        ${inputHtml}
+      `;
+
+      // Wire up inputs
+      if (q.type === "single") {
+        document.querySelectorAll(`input[name="q_${q.id}"]`).forEach(r => {
+          r.addEventListener("change", () => { answers[q.id] = r.value; });
+        });
+      } else if (q.type === "multi") {
+        document.querySelectorAll(`input[name="q_${q.id}"]`).forEach(cb => {
+          cb.addEventListener("change", () => {
+            const checked = [...document.querySelectorAll(`input[name="q_${q.id}"]:checked`)].map(c => c.value);
+            answers[q.id] = checked;
+          });
+        });
+      } else if (q.type === "text") {
+        document.getElementById(`text_${q.id}`).addEventListener("input", e => {
+          answers[q.id] = e.target.value;
+        });
+      }
+
+      // Nav buttons
+      document.getElementById("prev-btn").style.visibility = current === 0 ? "hidden" : "visible";
+      document.getElementById("next-btn").textContent = current === questions.length - 1 ? "✓ Submit" : "Next →";
+    }
+
+    function navigate(dir) {
+      // Save current text input
+      const q = questions[current];
+      if (q && q.type === "text") {
+        const el = document.getElementById(`text_${q.id}`);
+        if (el) answers[q.id] = el.value;
+      }
+
+      if (dir > 0 && current === questions.length - 1) {
+        submitQuestionnaire();
+        return;
+      }
+
+      current = Math.max(0, Math.min(questions.length - 1, current + dir));
+      render();
+    }
+
+    async function submitQuestionnaire() {
+      const answerArray = questions.map(q => ({
+        questionId: q.id,
+        answer: answers[q.id] || (q.type === "multi" ? [] : ""),
+      }));
+
+      try {
+        await App.api("/api/questionnaire", {
+          method: "POST",
+          body: JSON.stringify({ answers: answerArray }),
+        });
+        App.toast("Tastes saved! Generating your recommendations...", "success");
+        setTimeout(() => window.location.href = "/recommendations.html", 1000);
+      } catch (e) {
+        App.toast("Could not save answers", "error");
+      }
+    }
+  </script>
+</body>
+</html>

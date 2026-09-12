@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Recommendations — Book Recs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-active-page="recommendations">
+  <header class="top-bar"></header>
+
+  <main class="container">
+    <h1 style="margin-bottom:.5rem">📖 Your Recommendations</h1>
+    <p class="text-muted mb-2" id="subtitle">Books matched to your preferences</p>
+
+    <div id="no-questionnaire" class="card" style="display:none">
+      <div class="empty-state">
+        <div class="icon">📝</div>
+        <h3>You haven't taken the questionnaire yet!</h3>
+        <p class="text-muted mb-2">Tell us about your reading preferences first</p>
+        <a href="/questionnaire.html" class="btn btn-primary">Take the Questionnaire</a>
+      </div>
+    </div>
+
+    <div id="recs-container">
+      <div class="book-grid" id="recs-grid"></div>
+    </div>
+
+    <div id="no-recs" class="card" style="display:none">
+      <div class="empty-state">
+        <div class="icon">🤔</div>
+        <h3>No recommendations yet</h3>
+        <p class="text-muted">We couldn't find matching books. Ask your teacher to add more books!</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Book detail modal -->
+  <div class="modal-overlay" id="book-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal()">&times;</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <div class="toast-container"></div>
+  <script src="/js/app.js"></script>
+  <script>
+    let bookMap = {};
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      App.renderNav("recommendations");
+      const user = await App.requireAuth(["student"]);
+      if (!user) return;
+
+      try {
+        // Check if questionnaire is filled
+        const qdata = await App.api("/api/questionnaire");
+        if (!qdata.answers || qdata.answers.length === 0) {
+          document.getElementById("no-questionnaire").style.display = "";
+          document.getElementById("recs-container").style.display = "none";
+          return;
+        }
+
+        // Get recommendations
+        const rdata = await App.api("/api/recommendations");
+        (rdata.books || []).forEach(b => bookMap[b.id] = b);
+
+        const recs = rdata.recommendations || [];
+        if (recs.length === 0) {
+          document.getElementById("no-recs").style.display = "";
+          document.getElementById("recs-container").style.display = "none";
+          return;
+        }
+
+        document.getElementById("subtitle").textContent = `${recs.length} books matched to your preferences`;
+        document.getElementById("recs-grid").innerHTML = recs.map(renderRecCard).join("");
+      } catch (e) {
+        App.toast("Could not load recommendations", "error");
+      }
+    });
+
+    function renderRecCard(rec) {
+      const book = bookMap[rec.bookId] || {};
+      const coverSrc = book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg` : '');
+      const coverHtml = coverSrc
+        ? `<img src="${coverSrc}" alt="${book.title}" onerror="this.parentElement.innerHTML='<div class=no-cover><span>📖</span>${(book.title||'Unknown').replace(/'/g,'')}'">`
+        : `<div class="no-cover"><span>📖</span>${book.title || 'Unknown'}</div>`;
+      const pickBadge = book.teacherPick ? '<div class="teacher-pick-badge">⭐ Teacher Pick</div>' : '';
+      const scorePercent = Math.min(100, Math.round((rec.score / 30) * 100));
+      return `
+        <div class="book-card rec-card" onclick='openModal(${JSON.stringify({...book, reason: rec.reason}).replace(/'/g, "&#39;")})' style="cursor:pointer">
+          <div class="cover">${coverHtml}${pickBadge}<div class="match-score">${scorePercent}% match</div></div>
+          <div class="book-info">
+            <div class="book-title">${book.title || 'Unknown'}</div>
+            <div class="book-author">${book.author || ''}</div>
+            <div class="book-genres">${(book.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}</div>
+            ${rec.reason ? `<div class="rec-reason">${rec.reason}</div>` : ''}
+          </div>
+        </div>`;
+    }
+
+    function openModal(book) {
+      const coverSrc = book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg` : '');
+      const coverHtml = coverSrc
+        ? `<img src="${coverSrc}" alt="${book.title}" style="max-height:250px;border-radius:8px;margin-bottom:1rem" onerror="this.style.display='none'">`
+        : '';
+      document.getElementById("modal-content").innerHTML = `
+        ${coverHtml}
+        <h2>${book.title}</h2>
+        <p style="color:var(--text-muted);margin-bottom:1rem">by ${book.author}</p>
+        <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem">
+          ${(book.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}
+        </div>
+        ${book.description ? `<p style="margin-bottom:1rem">${book.description}</p>` : ''}
+        ${book.reason ? `<p style="color:var(--success);font-style:italic;margin-bottom:1rem">💡 ${book.reason}</p>` : ''}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.9rem;color:var(--text-muted)">
+          ${book.pages ? `<div>📄 ${book.pages} pages</div>` : ''}
+          ${book.difficulty ? `<div>📊 ${book.difficulty}</div>` : ''}
+          ${book.teacherPick ? `<div>⭐ Teacher Pick</div>` : ''}
+        </div>
+      `;
+      document.getElementById("book-modal").classList.add("open");
+    }
+
+    function closeModal() {
+      document.getElementById("book-modal").classList.remove("open");
+    }
+
+    document.getElementById("book-modal").addEventListener("click", e => {
+      if (e.target === e.currentTarget) closeModal();
+    });
+  </script>
+</body>
+</html>
