@@ -6,7 +6,13 @@
  * JSON file persistence, httpOnly session cookies, hashed admin
  * passwords, encrypted student code/password pairs.
  *
- *   node server.js            # serve on 0.0.0.0:8080
+ *   node server.js            # serve on 0.0.0.0:8080 (LAN + localhost)
+ *   node server.js --port=9090        # different port (or PORT=9090)
+ *   node server.js --host=127.0.0.1   # this computer only
+ *   node server.js --lan-check        # why can't other devices reach the LAN IP?
+ *
+ *   Other devices must use http://<this-computer's-LAN-IP>:8080 — printed at
+ *   startup. "localhost" only ever works on the machine running the server.
  *
  * API:
  *   GET  /api/state             -> shared state (sensitive fields redacted)
@@ -17,6 +23,7 @@
  *   POST /api/change-password   -> change current user's password
  *   POST /api/questionnaire     -> save student questionnaire answers
  *   GET  /api/recommendations   -> get personalized book recommendations
+ *   GET  /api/network           -> LAN URLs + firewall hint (admin only)
  *   POST /api/reset             -> reset all data (admin only)
  * ============================================================ */
 const http = require("http");
@@ -25,8 +32,39 @@ const path = require("path");
 const crypto = require("crypto");
 
 const ROOT = __dirname;
-const DEFAULT_PORT = process.env.PORT || process.env.BOOKRECS_PORT || 8080;
-const HOST = "0.0.0.0";
+const DEFAULT_PORT = 8080;
+
+/* Which address to bind. 0.0.0.0 = every network adapter, so the app is
+ * reachable from other devices on the LAN (and by Caddy / a tunnel).
+ * Set BOOKRECS_HOST=127.0.0.1 to keep it on this computer only.       */
+const HOST = process.env.BOOKRECS_HOST || "0.0.0.0";
+
+/* ---- CLI flags: --port=NNNN, --host=0.0.0.0, --lan-check, --help ---- */
+const FLAGS = parseFlags(process.argv.slice(2));
+function parseFlags(argv) {
+  const out = { port: 0, host: "", lanCheck: false, help: false };
+  argv.forEach((arg) => {
+    const port = arg.match(/^--port=(\d+)$/);
+    const host = arg.match(/^--host=(.+)$/);
+    if (port) out.port = parseInt(port[1], 10);
+    else if (host) out.host = host[1];
+    else if (arg === "--lan-check" || arg === "--lan-info" || arg === "lan-check")
+      out.lanCheck = true;
+    else if (arg === "--help" || arg === "-h") out.help = true;
+  });
+  return out;
+}
+if (FLAGS.host) process.env.BOOKRECS_HOST = FLAGS.host;
+const BIND_HOST = FLAGS.host || HOST;
+
+/* Effective listen port — precedence: --port > PORT/BOOKRECS_PORT env >
+ * saved admin setting > 8080. (See HOSTING.md "Picking a port".)        */
+function resolveListenPort() {
+  const saved = Number(state && state.settings && state.settings.port) || 0;
+  const env = parseInt(process.env.PORT || process.env.BOOKRECS_PORT || "", 10) || 0;
+  return FLAGS.port || env || saved || DEFAULT_PORT;
+}
+
 const DATA_FILE = path.join(ROOT, "bookrecs-data.json");
 const COOKIE = "bookrecs_session";
 const SESSION_TTL = 1000 * 60 * 60 * 6;
@@ -733,6 +771,28 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { settings: state.settings });
   }
 
+  // GET /api/network (admin only) — how devices reach this server
+  if (pathname === "/api/network" && method === "GET") {
+    const sess = getSession(req);
+    if (!sess) return json(res, 401, { error: "Not signed in" });
+    const user = state.users.find((u) => u.id === sess.userId);
+    if (!user || user.role !== "admin") return json(res, 403, { error: "Admin only" });
+    const port = resolveListenPort();
+    return json(res, 200, {
+      boundHost: BIND_HOST,
+      port,
+      localUrl: `http://localhost:${port}`,
+      lanUrls: lanUrls(port),
+      // Anything the server found but refused to advertise as a LAN address
+      interfaces: require("./deploy/lan-check.js")
+        .lanAddresses()
+        .map((a) => ({ name: a.name, ip: a.ip, kind: a.kind })),
+      note: /^127\.|^localhost$|^::1$/.test(BIND_HOST)
+        ? "Server is bound to the loopback address, so other devices cannot connect. Restart with: node server.js --host=0.0.0.0"
+        : "Devices must be on the same network as this computer, use http:// (not https), and this machine's firewall must allow inbound TCP " + port + ". A LAN address never works from another site — use the tunnel/DDNS URL for that.",
+    });
+  }
+
   // POST /api/state
   if (pathname === "/api/state" && method === "POST") {
     const sess = getSession(req);
@@ -796,16 +856,25 @@ const server = http.createServer(async (req, res) => {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME[ext] || "application/octet-stream";
 
+  /* Cache policy: pages/manifest/service worker always revalidated, so a device
+   * that visited from another address (localhost vs LAN IP) never keeps
+   * rendering a stale shell after you update the app. */
+  const noCache = ext === ".html" || ext === ".webmanifest" || /(^|\/)sw\.js$/.test(pathname);
+  const headers = {
+    "Content-Type": contentType,
+    "Cache-Control": noCache ? "no-cache" : "public, max-age=300",
+  };
+
   try {
     const content = fs.readFileSync(filePath);
-    res.writeHead(200, { "Content-Type": contentType });
+    res.writeHead(200, headers);
     res.end(content);
   } catch (e) {
     if (e.code === "ENOENT") {
       // Serve index.html for SPA-like routes
       try {
         const fallback = fs.readFileSync(path.join(ROOT, "index.html"));
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
         res.end(fallback);
       } catch (e2) {
         res.writeHead(404);
@@ -1108,17 +1177,113 @@ function seed() {
   }
 }
 
+/* ---- LAN addresses (the URLs other devices actually type) ---- */
+function lanUrls(port) {
+  return require("./deploy/lan-check.js").lanUrls(port);
+}
+
+/* Print the friendly startup banner */
+function printBanner(port, savedPort) {
+  const line = "─".repeat(52);
+  console.log(`\n  📚  Classroom Book Recommendations`);
+  console.log(`  ${line}`);
+  console.log(`  Listening on ${BIND_HOST}:${port}`);
+  if (savedPort && savedPort !== port) {
+    const why =
+      FLAGS.port && port === FLAGS.port ? "--port flag"
+      : process.env.PORT || process.env.BOOKRECS_PORT ? "PORT env var"
+      : "the built-in default";
+    console.log(`  (the saved admin setting says port ${savedPort}, but ${why} wins → use ${port})`);
+  }
+  console.log("");
+  console.log(`  This computer:   http://localhost:${port}`);
+  const loopbackOnly = /^(127\.|localhost$|::1$|\[::1\]$)/.test(BIND_HOST);
+  const urls = loopbackOnly ? [] : lanUrls(port);
+  const ifAddrs = require("./deploy/lan-check.js").lanAddresses();
+  if (loopbackOnly) {
+    console.log(`  Other devices:   ✗ blocked — bound to ${BIND_HOST} (this computer only)`);
+    console.log(`                   use  node server.js --host=0.0.0.0  to serve the LAN`);
+  } else if (urls.length) {
+    console.log(`  Other devices:   ${urls[0]}   ← use THIS on phones/laptops`);
+    urls.slice(1).forEach((u) => console.log(`                   ${u}`));
+  } else if (ifAddrs.length) {
+    const why = (a) =>
+      a.kind === "apipa" ? "no DHCP lease — reconnect the network"
+      : a.kind === "public" ? "public address, not a LAN IP"
+      : a.kind === "cgnat" ? "CGNAT/Tailscale range" : a.kind;
+    console.log(`  Other devices:   no usable LAN address; found:`);
+    ifAddrs.forEach((a) => console.log(`                   ${a.ip} (${a.name}) — ${why(a)}`));
+    console.log(`                   Try again after the network connects (a phone hotspot works).`);
+  } else {
+    console.log(`  Other devices:   no LAN IPv4 adapter found on this machine`);
+    console.log(`                   (container/VM? publish the port, or use a tunnel)`);
+  }
+  console.log("");
+  console.log(`  Note: "0.0.0.0" is the bind address, not a URL — never type`);
+  console.log(`        http://0.0.0.0:${port} or http://localhost:${port} on another device.`);
+  console.log(`  "http://", not https. Both devices must be on the SAME network.`);
+  console.log("");
+  console.log(`  Admin login:  username "admin" / password "admin123"`);
+  console.log(`  Students log in with a unique code (teacher assigns)`);
+  console.log(`\n  Nothing loading on another device?  run:  node deploy/lan-check.js\n`);
+}
+
 /* ----------------------------- start ----------------------------------- */
 loadData();
 seed();
 persist();
 
-const LISTEN_PORT = state.settings.port || DEFAULT_PORT;
-server.listen(LISTEN_PORT, HOST, () => {
-  console.log(`\n  📚  Classroom Book Recommendations`);
-  console.log(`  ────────────────────────────────────`);
-  console.log(`  Server running on http://${HOST}:${LISTEN_PORT}`);
-  console.log(`  Open http://localhost:${LISTEN_PORT} in your browser\n`);
-  console.log(`  Admin login:  username "admin" / password "admin123"`);
-  console.log(`  Students log in with a unique code (teacher assigns)\n`);
-});
+if (FLAGS.help) {
+  console.log(`
+  Classroom Book Recommendations server
+
+    node server.js                    listen on 0.0.0.0:8080
+    node server.js --port=9090        use another port (or PORT=9090)
+    node server.js --host=127.0.0.1   this computer only (default: everyone on the LAN)
+    node server.js --lan-check        diagnose "other devices can't reach the LAN IP"
+    node server.js --lan-check --port=8080
+
+  LAN URLs for other devices are printed at startup. See HOSTING.md.
+`);
+  process.exit(0);
+}
+
+if (FLAGS.lanCheck) {
+  // Diagnostics only — report, then exit without serving.
+  require("./deploy/lan-check.js")
+    .run({ port: resolveListenPort(), host: BIND_HOST })
+    .catch((e) => {
+      console.error("  lan-check failed:", (e && e.message) || e);
+      process.exitCode = 1;
+    })
+    .then(() => process.exit(process.exitCode || 0));
+} else {
+  startServer();
+}
+
+function startServer() {
+  const LISTEN_PORT = resolveListenPort();
+  const SAVED_PORT = Number(state.settings && state.settings.port) || 0;
+
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`\n  ✗ Could not start: port ${LISTEN_PORT} is already in use on ${BIND_HOST}.\n`);
+      console.error(`    Most likely another copy of this server (or another app) is already running.`);
+      console.error(`    Fix it with ONE of these:\n`);
+      console.error(`      · Just use the running one → open ${lanUrls(LISTEN_PORT)[0] || `http://localhost:${LISTEN_PORT}`}`);
+      console.error(`      · Pick a different port    → node server.js --port=9090`);
+      console.error(`      · Find / stop the holder   → Windows:  netstat -ano | findstr :${LISTEN_PORT}`);
+      console.error(`                                   macOS/Linux: lsof -i :${LISTEN_PORT} -sTCP:LISTEN\n`);
+    } else if (err.code === "EACCES") {
+      console.error(`\n  ✗ Permission denied binding ${BIND_HOST}:${LISTEN_PORT}.`);
+      console.error(`    Ports under 1024 need root. Either run the app on 8080 and put`);
+      console.error(`    Caddy/a tunnel in front of it, or start with sudo (not recommended).\n`);
+    } else {
+      console.error(`\n  ✗ Server error: ${err.code || ""} ${err.message}\n`);
+    }
+    process.exit(1);
+  });
+
+  server.listen(LISTEN_PORT, BIND_HOST, () => printBanner(LISTEN_PORT, SAVED_PORT));
+}
+

@@ -179,6 +179,38 @@ const App = (() => {
     `;
   }
 
+  /* ---- clipboard ----
+   * navigator.clipboard only exists in a secure context, and the usual way to
+   * reach this app is plain http://<LAN-IP>:8080 — so keep a fallback. */
+  async function writeClipboard(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) { /* fall through */ }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function copyText(text, okMsg) {
+    if (await writeClipboard(text)) toast(okMsg || "Copied", "success");
+    else toast("Couldn't copy — select the text and copy it by hand", "error");
+  }
+
   /* ---- auth guard ---- */
   async function requireAuth(allowedRoles) {
     let user = await getMe();
@@ -228,6 +260,7 @@ const App = (() => {
     logout,
     renderNav,
     requireAuth,
+    copyText,
     initDarkMode,
     toggleDarkMode,
     getToken,

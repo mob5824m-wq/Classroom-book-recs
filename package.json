@@ -4,7 +4,9 @@
   "description": "Classroom Book Recommendation System — teacher-curated recommendations based on student preferences",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "lan-check": "node deploy/lan-check.js",
+    "lan-test": "node deploy/lan-check.js --serve-test"
   },
   "license": "MIT"
 }

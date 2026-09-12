@@ -35,6 +35,26 @@ Open **http://localhost:8080** and sign in:
 | Teacher (Admin) | username: `admin` | `admin123` |
 | Student | unique code (e.g. after adding in admin) | default password |
 
+### On other devices (classroom laptops, tablets, phones)
+
+`localhost` only works on the machine running the server. Other devices use this
+machine's **LAN IP**, which the server prints at startup:
+
+```
+  Other devices:   http://192.168.1.50:8080   ← use THIS on phones/laptops
+```
+
+Requirements: same Wi-Fi/network, plain `http://`, and inbound TCP 8080 allowed by
+the host's firewall (`sudo ufw allow 8080/tcp`, or on Windows:
+`netsh advfirewall firewall add rule name="Book Recs 8080" dir=in action=allow protocol=TCP localport=8080`).
+
+Troubleshooting and how to reach the app from a different network (school):
+[HOSTING.md](HOSTING.md) — or run the built-in check:
+
+```bash
+node deploy/lan-check.js          # or: npm run lan-check
+```
+
 ## How It Works
 
 1. **Teacher signs in** and adds books to the catalog (with genres, themes, mood, difficulty)
