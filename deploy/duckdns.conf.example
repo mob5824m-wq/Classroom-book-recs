@@ -1,0 +1,8 @@
+# Fill in your DuckDNS details, then rename this file to  duckdns.conf
+# Get your token at https://www.duckdns.org (after signing in with Google/GitHub).
+
+# The subdomain only (no .duckdns.org). For "mybookrecs.duckdns.org" use:
+DUCKDNS_DOMAIN=mybookrecs
+
+# The token from your DuckDNS dashboard.
+DUCKDNS_TOKEN=your-token-here

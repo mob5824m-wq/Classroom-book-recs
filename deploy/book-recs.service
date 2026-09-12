@@ -1,0 +1,28 @@
+# systemd service to run the Classroom Book Recs server automatically and keep it
+# alive across reboots/crashes (Linux / Raspberry Pi).
+#
+# SETUP
+#   1. Edit the three paths below to match where you cloned the repo and your
+#      username:  WorkingDirectory, ExecStart (node path), User.
+#   2. Install & enable:
+#        sudo cp book-recs.service /etc/systemd/system/
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable --now book-recs
+#   3. Check it's running / see logs:
+#        systemctl status book-recs
+#        journalctl -u book-recs -f
+
+[Unit]
+Description=Classroom Book Recs server
+After=network.target
+
+[Service]
+WorkingDirectory=/home/pi/Classroom-book-recs
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+User=pi
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

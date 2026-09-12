@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — Book Recs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-active-page="login">
+  <header class="top-bar"></header>
+
+  <main class="login-wrapper">
+    <div class="login-box">
+      <div class="card">
+        <h1>📚 Sign In</h1>
+        <p class="subtitle">Enter your unique code or admin credentials</p>
+
+        <!-- Student login -->
+        <div id="student-form">
+          <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-muted)">Student Login</h3>
+          <div class="form-group">
+            <label for="code">Your Unique Code</label>
+            <input type="text" id="code" placeholder="e.g. READ-7X2K" autocomplete="off"
+                   style="text-transform:uppercase;font-size:1.2rem;text-align:center;letter-spacing:.1em">
+            <p class="help">Enter the code your teacher gave you</p>
+          </div>
+          <button class="btn btn-primary w-full" id="student-login-btn">Sign In with Code</button>
+        </div>
+
+        <div class="divider">or</div>
+
+        <!-- Admin login -->
+        <div id="admin-form">
+          <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-muted)">Teacher / Admin Login</h3>
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" placeholder="admin" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label for="admin-password">Password</label>
+            <input type="password" id="admin-password" placeholder="Password" autocomplete="current-password">
+          </div>
+          <button class="btn btn-secondary w-full" id="admin-login-btn">Sign In as Teacher</button>
+        </div>
+
+        <p class="text-muted mt-2" style="text-align:center;font-size:.85rem">
+          <a href="/">← Back to home</a>
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-container"></div>
+  <script src="/js/app.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      App.renderNav("");
+      App.getMe().then(me => {
+        if (me) window.location.href = me.role === "admin" ? "/admin.html" : "/recommendations.html";
+      });
+
+      document.getElementById("student-login-btn").addEventListener("click", async () => {
+        const code = document.getElementById("code").value.trim();
+        if (!code) return App.toast("Please enter your code", "error");
+        const btn = document.getElementById("student-login-btn");
+        btn.disabled = true; btn.textContent = "Signing in...";
+        try {
+          const user = await App.login(code, null);
+          App.toast("Welcome!", "success");
+          const token = App.getToken();
+          const dest = "/questionnaire.html";
+          setTimeout(() => {
+            window.location.href = token ? `${dest}#token=${token}` : dest;
+          }, 300);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = "Sign In with Code";
+        }
+      });
+
+      document.getElementById("admin-login-btn").addEventListener("click", async () => {
+        const username = document.getElementById("username").value.trim();
+        const pw = document.getElementById("admin-password").value;
+        if (!username || !pw) return App.toast("Username and password required", "error");
+        const btn = document.getElementById("admin-login-btn");
+        btn.disabled = true; btn.textContent = "Signing in...";
+        try {
+          const user = await App.login(null, pw, username);
+          App.toast("Welcome, teacher!", "success");
+          // Pass token via URL hash (survives proxy, never sent to server)
+          const token = App.getToken();
+          setTimeout(() => {
+            window.location.href = token ? `/admin.html#token=${token}` : "/admin.html";
+          }, 300);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = "Sign In as Teacher";
+        }
+      });
+
+      // Enter key support
+      document.getElementById("code").addEventListener("keydown", e => {
+        if (e.key === "Enter") document.getElementById("student-login-btn").click();
+      });
+      document.getElementById("admin-password").addEventListener("keydown", e => {
+        if (e.key === "Enter") document.getElementById("admin-login-btn").click();
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Book Catalog — Book Recs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-active-page="catalog">
+  <header class="top-bar"></header>
+
+  <main class="container">
+    <h1 style="margin-bottom:.5rem">📖 Book Catalog</h1>
+    <p class="text-muted mb-2">Browse all available books in the collection</p>
+
+    <div class="filter-bar">
+      <input type="text" class="search-input" id="search" placeholder="Search by title or author...">
+      <select id="genre-filter">
+        <option value="">All Genres</option>
+      </select>
+      <select id="sort-select">
+        <option value="title">Sort: Title</option>
+        <option value="author">Sort: Author</option>
+        <option value="newest">Sort: Newest</option>
+      </select>
+    </div>
+
+    <div id="results-count" class="text-muted mb-2" style="font-size:.9rem"></div>
+    <div class="book-grid" id="book-grid"></div>
+    <div class="empty-state hidden" id="empty">
+      <div class="icon">📚</div>
+      <h3>No books found</h3>
+      <p>Try adjusting your search or filters</p>
+    </div>
+  </main>
+
+  <!-- Book detail modal -->
+  <div class="modal-overlay" id="book-modal">
+    <div class="modal">
+      <button class="close-btn" onclick="closeModal()">&times;</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <div class="toast-container"></div>
+  <script src="/js/app.js"></script>
+  <script>
+    let allBooks = [];
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      App.renderNav("catalog");
+      await App.getMe();
+
+      try {
+        const st = await App.getState();
+        allBooks = (st.books || []).filter(b => b.approved !== false);
+        populateGenres();
+        renderBooks();
+      } catch (e) {}
+
+      document.getElementById("search").addEventListener("input", renderBooks);
+      document.getElementById("genre-filter").addEventListener("change", renderBooks);
+      document.getElementById("sort-select").addEventListener("change", renderBooks);
+    });
+
+    function populateGenres() {
+      const genres = new Set();
+      allBooks.forEach(b => (b.genres || []).forEach(g => genres.add(g)));
+      const sel = document.getElementById("genre-filter");
+      [...genres].sort().forEach(g => {
+        const opt = document.createElement("option");
+        opt.value = g;
+        opt.textContent = g;
+        sel.appendChild(opt);
+      });
+    }
+
+    function renderBooks() {
+      const search = document.getElementById("search").value.toLowerCase();
+      const genre = document.getElementById("genre-filter").value;
+      const sort = document.getElementById("sort-select").value;
+
+      let filtered = allBooks.filter(b => {
+        const matchSearch = !search ||
+          b.title.toLowerCase().includes(search) ||
+          b.author.toLowerCase().includes(search);
+        const matchGenre = !genre || (b.genres || []).includes(genre);
+        return matchSearch && matchGenre;
+      });
+
+      if (sort === "title") filtered.sort((a, b) => a.title.localeCompare(b.title));
+      else if (sort === "author") filtered.sort((a, b) => a.author.localeCompare(b.author));
+      else if (sort === "newest") filtered.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+
+      document.getElementById("results-count").textContent = `${filtered.length} book${filtered.length !== 1 ? 's' : ''}`;
+      document.getElementById("book-grid").innerHTML = filtered.map(renderBookCard).join("");
+      document.getElementById("empty").classList.toggle("hidden", filtered.length > 0);
+    }
+
+    function renderBookCard(book) {
+      const coverSrc = book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg` : '');
+      const coverHtml = coverSrc
+        ? `<img src="${coverSrc}" alt="${book.title}" onerror="this.parentElement.innerHTML='<div class=no-cover><span>📖</span>${book.title.replace(/'/g,"")}</div>'">`
+        : `<div class="no-cover"><span>📖</span>${book.title}</div>`;
+      const pickBadge = book.teacherPick ? '<div class="teacher-pick-badge">⭐ Teacher Pick</div>' : '';
+      return `
+        <div class="book-card" onclick='openModal(${JSON.stringify(book).replace(/'/g, "&#39;")})' style="cursor:pointer">
+          <div class="cover">${coverHtml}${pickBadge}</div>
+          <div class="book-info">
+            <div class="book-title">${book.title}</div>
+            <div class="book-author">${book.author}</div>
+            <div class="book-genres">${(book.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}</div>
+            <div class="book-meta">
+              <span>${book.pages ? book.pages + ' pages' : ''}</span>
+              <span>${book.difficulty || ''}</span>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function openModal(book) {
+      const coverSrc = book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg` : '');
+      const coverHtml = coverSrc
+        ? `<img src="${coverSrc}" alt="${book.title}" style="max-height:250px;border-radius:8px;margin-bottom:1rem" onerror="this.style.display='none'">`
+        : '';
+      document.getElementById("modal-content").innerHTML = `
+        ${coverHtml}
+        <h2>${book.title}</h2>
+        <p style="color:var(--text-muted);margin-bottom:1rem">by ${book.author}</p>
+        <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem">
+          ${(book.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}
+        </div>
+        ${book.description ? `<p style="margin-bottom:1rem">${book.description}</p>` : ''}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.9rem;color:var(--text-muted)">
+          ${book.pages ? `<div>📄 ${book.pages} pages</div>` : ''}
+          ${book.difficulty ? `<div>📊 ${book.difficulty}</div>` : ''}
+          ${book.isbn ? `<div>ISBN: ${book.isbn}</div>` : ''}
+          ${book.teacherPick ? `<div>⭐ Teacher Pick</div>` : ''}
+        </div>
+        ${(book.themes||[]).length ? `<div style="margin-top:1rem"><strong>Themes:</strong> ${book.themes.join(', ')}</div>` : ''}
+        ${book.mood ? `<div style="margin-top:.5rem"><strong>Mood:</strong> ${book.mood}</div>` : ''}
+      `;
+      document.getElementById("book-modal").classList.add("open");
+    }
+
+    function closeModal() {
+      document.getElementById("book-modal").classList.remove("open");
+    }
+
+    document.getElementById("book-modal").addEventListener("click", e => {
+      if (e.target === e.currentTarget) closeModal();
+    });
+  </script>
+</body>
+</html>
