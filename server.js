@@ -39,10 +39,10 @@ const DEFAULT_PORT = 8080;
  * Set BOOKRECS_HOST=127.0.0.1 to keep it on this computer only.       */
 const HOST = process.env.BOOKRECS_HOST || "0.0.0.0";
 
-/* ---- CLI flags: --port=NNNN, --host=0.0.0.0, --lan-check, --help ---- */
+/* ---- CLI flags: --port=NNNN, --host=0.0.0.0, --lan-check, --print-url ---- */
 const FLAGS = parseFlags(process.argv.slice(2));
 function parseFlags(argv) {
-  const out = { port: 0, host: "", lanCheck: false, help: false };
+  const out = { port: 0, host: "", lanCheck: false, printUrl: false, open: false, help: false };
   argv.forEach((arg) => {
     const port = arg.match(/^--port=(\d+)$/);
     const host = arg.match(/^--host=(.+)$/);
@@ -50,6 +50,8 @@ function parseFlags(argv) {
     else if (host) out.host = host[1];
     else if (arg === "--lan-check" || arg === "--lan-info" || arg === "lan-check")
       out.lanCheck = true;
+    else if (arg === "--print-url" || arg === "--url") out.printUrl = true;
+    else if (arg === "--open" || arg === "-o") out.open = true;
     else if (arg === "--help" || arg === "-h") out.help = true;
   });
   return out;
@@ -66,6 +68,7 @@ function resolveListenPort() {
 }
 
 const DATA_FILE = path.join(ROOT, "bookrecs-data.json");
+const URL_FILE = path.join(ROOT, "bookrecs-url.txt");
 const COOKIE = "bookrecs_session";
 const SESSION_TTL = 1000 * 60 * 60 * 6;
 const SESSION_ABS_MAX = 1000 * 60 * 60 * 24 * 7;
@@ -783,6 +786,9 @@ const server = http.createServer(async (req, res) => {
       port,
       localUrl: `http://localhost:${port}`,
       lanUrls: lanUrls(port),
+      // How the first URL was picked, so the teacher can trust (or override) it
+      primary: primaryInfo(port),
+      urlFile: path.basename(URL_FILE),
       // Anything the server found but refused to advertise as a LAN address
       interfaces: require("./deploy/lan-check.js")
         .lanAddresses()
@@ -1177,9 +1183,45 @@ function seed() {
   }
 }
 
-/* ---- LAN addresses (the URLs other devices actually type) ---- */
+/* ---- LAN addresses (the URLs other devices actually type) ----
+ * Detection lives in deploy/lan-check.js: it asks the OS routing table which
+ * interface carries the default route, so a VirtualBox/WSL adapter can't win.
+ * Pin the advertised address with BOOKRECS_LAN_IP=192.168.1.50 if you know
+ * better than the router (NAT, reverse proxy, cloud public IP).            */
 function lanUrls(port) {
   return require("./deploy/lan-check.js").lanUrls(port);
+}
+function primaryInfo(port) {
+  return require("./deploy/lan-check.js").primaryInfo(port);
+}
+
+/* Keep a file with the current LAN URL so you can grab the address any time —
+ * it's the first line, no comments, so `head -1 bookrecs-url.txt` works.   */
+function writeLanUrlFile(port) {
+  try {
+    const urls = lanUrls(port);
+    const prim = primaryInfo(port);
+    const body =
+      (urls[0] || `http://localhost:${port}`) +
+      "\n\n" +
+      "# Classroom Book Recs — addresses other devices can use (do not share publicly)\n" +
+      `# updated: ${new Date().toISOString()}\n` +
+      `# port:    ${port}   bound to: ${BIND_HOST}\n` +
+      `# on this computer: http://localhost:${port}\n` +
+      (urls.length
+        ? urls
+            .map((u, i) => {
+              const where = !i && prim.iface ? (prim.iface === "pinned" ? "pinned address" : prim.iface) : "";
+              return `# device ${i + 1}:     ${u}${where ? `   (${where})` : ""}`;
+            })
+            .join("\n") + "\n"
+        : "# no usable LAN address found — see HOSTING.md, Option C\n") +
+      (urls.length > 1 ? "# (multiple adapters: use the one on the students' network)\n" : "");
+    fs.writeFileSync(URL_FILE, body);
+    return body;
+  } catch (e) {
+    return "";
+  }
 }
 
 /* Print the friendly startup banner */
@@ -1198,14 +1240,18 @@ function printBanner(port, savedPort) {
   console.log("");
   console.log(`  This computer:   http://localhost:${port}`);
   const loopbackOnly = /^(127\.|localhost$|::1$|\[::1\]$)/.test(BIND_HOST);
+  const prim = primaryInfo(port);
   const urls = loopbackOnly ? [] : lanUrls(port);
   const ifAddrs = require("./deploy/lan-check.js").lanAddresses();
   if (loopbackOnly) {
     console.log(`  Other devices:   ✗ blocked — bound to ${BIND_HOST} (this computer only)`);
     console.log(`                   use  node server.js --host=0.0.0.0  to serve the LAN`);
   } else if (urls.length) {
+    const how = prim.via === "BOOKRECS_LAN_IP" ? "pinned via BOOKRECS_LAN_IP" : `auto-detected · ${prim.iface || "?"} · ${prim.via || "default route"}`;
     console.log(`  Other devices:   ${urls[0]}   ← use THIS on phones/laptops`);
+    console.log(`                   (${how})`);
     urls.slice(1).forEach((u) => console.log(`                   ${u}`));
+    console.log(`                   (also saved to ${path.basename(URL_FILE)})`);
   } else if (ifAddrs.length) {
     const why = (a) =>
       a.kind === "apipa" ? "no DHCP lease — reconnect the network"
@@ -1213,7 +1259,8 @@ function printBanner(port, savedPort) {
       : a.kind === "cgnat" ? "CGNAT/Tailscale range" : a.kind;
     console.log(`  Other devices:   no usable LAN address; found:`);
     ifAddrs.forEach((a) => console.log(`                   ${a.ip} (${a.name}) — ${why(a)}`));
-    console.log(`                   Try again after the network connects (a phone hotspot works).`);
+    console.log(`                   Try again after the network connects (a phone hotspot works),`);
+    console.log(`                   or pin the address:  BOOKRECS_LAN_IP=192.168.1.50 node server.js`);
   } else {
     console.log(`  Other devices:   no LAN IPv4 adapter found on this machine`);
     console.log(`                   (container/VM? publish the port, or use a tunnel)`);
@@ -1237,15 +1284,29 @@ if (FLAGS.help) {
   console.log(`
   Classroom Book Recommendations server
 
-    node server.js                    listen on 0.0.0.0:8080
+    node server.js                    listen on 0.0.0.0:8080, print the LAN URL
     node server.js --port=9090        use another port (or PORT=9090)
     node server.js --host=127.0.0.1   this computer only (default: everyone on the LAN)
+    node server.js --print-url        print the one URL devices should use, then exit
+    node server.js --open             also open the app in this computer's browser
     node server.js --lan-check        diagnose "other devices can't reach the LAN IP"
     node server.js --lan-check --port=8080
 
-  LAN URLs for other devices are printed at startup. See HOSTING.md.
+  The LAN address is found automatically from the OS routing table (the interface
+  with the default route), refreshed while the server runs, and written to
+  bookrecs-url.txt. Pin it with BOOKRECS_LAN_IP=192.168.1.50 if you must.
+  See HOSTING.md for firewall + reachability.
 `);
   process.exit(0);
+}
+
+if (FLAGS.printUrl) {
+  const port = resolveListenPort();
+  const { bestUrl } = require("./deploy/lan-check.js");
+  const url = bestUrl(port);
+  // Exit 1 when there's no LAN address, so scripts can branch on it.
+  console.log(url || `http://localhost:${port}`);
+  process.exit(url ? 0 : 1);
 }
 
 if (FLAGS.lanCheck) {
@@ -1261,9 +1322,27 @@ if (FLAGS.lanCheck) {
   startServer();
 }
 
+/* Best-effort "open it for me" on the host machine — never fatal. */
+function openBrowser(url) {
+  const { spawn } = require("child_process");
+  const platform = process.platform;
+  const [bin, args] =
+    platform === "win32" ? ["cmd", ["/c", "start", "", url]]
+    : platform === "darwin" ? ["open", [url]]
+    : ["xdg-open", [url]];
+  try {
+    const child = spawn(bin, args, { stdio: "ignore", detached: true });
+    child.on("error", () => console.log(`  (couldn't open a browser — go to ${url})`));
+    child.unref();
+  } catch (e) {
+    console.log(`  (couldn't open a browser — go to ${url})`);
+  }
+}
+
 function startServer() {
   const LISTEN_PORT = resolveListenPort();
   const SAVED_PORT = Number(state.settings && state.settings.port) || 0;
+  let lastBestUrl = "";
 
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
@@ -1284,6 +1363,38 @@ function startServer() {
     process.exit(1);
   });
 
-  server.listen(LISTEN_PORT, BIND_HOST, () => printBanner(LISTEN_PORT, SAVED_PORT));
+  server.listen(LISTEN_PORT, BIND_HOST, () => {
+    printBanner(LISTEN_PORT, SAVED_PORT);
+    writeLanUrlFile(LISTEN_PORT);
+    lastBestUrl = lanUrls(LISTEN_PORT)[0] || "";
+    if (FLAGS.open) openBrowser(`http://localhost:${LISTEN_PORT}`);
+    watchLanAddress(LISTEN_PORT);
+  });
+
+  /* Wi-Fi re-leases, dongles come and go, laptops move between networks — so
+   * re-check quietly and shout (and rewrite the URL file) only on a change. */
+  function watchLanAddress(port) {
+    if (/^(127\.|localhost$|::1$|\[::1\]$)/.test(BIND_HOST)) return; // loopback-only
+    const tick = () => {
+      try {
+        require("./deploy/lan-check.js").refreshNetwork();
+        const best = lanUrls(port)[0] || "";
+        if (best !== lastBestUrl) {
+          const was = lastBestUrl;
+          lastBestUrl = best;
+          writeLanUrlFile(port);
+          console.log(
+            `  ↻ LAN address ${was ? "changed" : "found"} → ${best || "none (network down?)"}${
+              best ? "   ← tell devices to use this one" : ""
+            }`
+          );
+        }
+      } catch (e) {
+        /* never let a network hiccup take the server down */
+      }
+    };
+    const timer = setInterval(tick, 20000);
+    if (timer.unref) timer.unref();
+  }
 }
 

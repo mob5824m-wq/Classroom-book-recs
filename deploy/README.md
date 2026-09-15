@@ -13,7 +13,7 @@ You do not need any of it to run the site locally.
 | `duckdns-update.bat` | Same auto-update, as a Windows scheduled task. Edit the domain/token inside. | Windows |
 | `book-recs.service` | Runs `node server.js` automatically and restarts it on crash/reboot. | Linux (systemd) |
 | `start_bookrecs.bat` | Starts the server on Windows. Put a shortcut in the Startup folder. | Windows |
-| `lan-check.js` | Diagnoses "other devices can't open the LAN IP": listening port, bind address, real LAN IPs, app answers on the LAN IP or only localhost, firewall state, plus the exact command to open the port. No dependencies. | All |
+| `lan-check.js` | Auto-detects the LAN address your class should use (via the OS default route) and diagnoses "other devices can't open the LAN IP": listening port, bind address, real LAN IPs, app answers on the LAN IP or only localhost, firewall state, plus the exact command to open the port. `--print-url` outputs just the URL; `--serve-test` publishes a test page. No dependencies. | All |
 | `lan-check.bat` / `lan-check.sh` | Thin wrappers so you can double-click / `./` the check. | Windows / macOS-Linux |
 | `../Caddyfile.example` | The only config Caddy needs — free HTTPS, routes to the app on port 8080. | All |
 
@@ -52,7 +52,9 @@ Students at school
 If the class is on the same network as the hosting computer you don't need any of
 the files above: start `node server.js`, read the `Other devices: http://<ip>:8080`
 line from its banner, open port `8080` in that machine's firewall, and verify with
-`node deploy/lan-check.js`. Full walkthrough (including the troubleshooting table)
+`node deploy/lan-check.js`. The server auto-detects the address itself (printed at
+startup, kept in `bookrecs-url.txt`, re-checked every 20 s, pinnable with
+`BOOKRECS_LAN_IP`). Full walkthrough (including the troubleshooting table)
 is in [../HOSTING.md](../HOSTING.md#option-c--lan-only-same-network-no-internet-needed).
 
 ## Backups

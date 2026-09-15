@@ -3,4 +3,5 @@ node_modules/
 !package.json
 library-secret.key
 bookrecs-secret.key
+bookrecs-url.txt
 .DS_Store

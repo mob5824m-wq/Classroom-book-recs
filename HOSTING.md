@@ -137,30 +137,57 @@ If the class is on the same Wi-Fi / network as the computer running the app, you
 need nothing but the five steps below — and the class keeps working even when
 the internet is down.
 
-### 1. Start the server and read the printed URL
+### 1. Start the server — it finds your IP for you
 
 ```bash
 node server.js
 ```
 
-The startup banner prints the exact address every other device should use:
+The banner prints the address every other device should use. It asks the OS
+routing table which adapter carries the **default route**, so a VirtualBox / WSL /
+Bluetooth adapter can't hijack the answer the way `ipconfig` ordering does:
 
 ```
   Listening on 0.0.0.0:8080
 
   This computer:   http://localhost:8080
   Other devices:   http://192.168.1.50:8080   ← use THIS on phones/laptops
+                   (auto-detected · Wi-Fi · default route)
+                   (also saved to bookrecs-url.txt)
 ```
 
-Two things trip people up here:
+That address is also written to **`bookrecs-url.txt`** (first line only, so
+`head -1 bookrecs-url.txt` gives you the URL to paste into an email), and it is
+re-checked every 20 seconds — if your Wi-Fi re-leases a new IP mid-lesson, the
+server logs `↻ LAN address changed → http://192.168.1.77:8080` and rewrites the
+file, instead of you discovering it an hour later.
+
+Handy variants:
+
+```bash
+node server.js --print-url     # just the URL, then exit (for scripts / a shortcut)
+node server.js --open          # also launch this computer's browser on the app
+node server.js --help          # all flags
+```
+
+If the machine has several networks and you know which one the class is on, pin it
+instead of guessing — the banner will say `pinned via BOOKRECS_LAN_IP`:
+
+```bash
+BOOKRECS_LAN_IP=192.168.1.50 node server.js      # macOS / Linux
+set BOOKRECS_LAN_IP=192.168.1.50 && node server.js   # Windows CMD
+```
+
+Two things still trip people up:
 
 - **`0.0.0.0` is a bind address, not a URL.** It means "listen on every network
-  adapter". Nobody types it into a browser.
-- **`localhost` means "this device".** A student's tablet asking `localhost:8080`
+  adapter" — exactly what you want. Nobody types it into a browser.
+- **`localhost` means "this device".** A student's tablet opening `localhost:8080`
   is asking its own tablet, not your computer. Only the LAN IP works for them.
 
-If the banner says `no usable LAN address` / `no LAN IPv4 adapter`, the machine
-isn't on a network yet (or it's in a container/VM — publish or forward the port).
+If you instead see `no usable LAN address; found: 169.254.x.x (no DHCP lease)` or
+`no LAN IPv4 adapter`, the machine isn't really on the network yet (or it's in a
+container/VM — publish or forward the port there).
 
 ### 2. Let the firewall through — the #1 reason LAN access "doesn't work"
 
@@ -192,6 +219,7 @@ renews — and "it worked yesterday" is really "the IP changed".
 ```bash
 node deploy/lan-check.js                        # full report + the fix for whatever is wrong
 node deploy/lan-check.js --port=9090             # check a non-default port
+node deploy/lan-check.js --print-url             # skip the report, just give me the URL
 node deploy/lan-check.js --serve-test --port=8090  # plain test page, to prove the network path
 ```
 
@@ -341,6 +369,8 @@ Full setup, firewall commands and a troubleshooting table: **Option C** above;
 |------|-----------------|
 | Start locally | `node server.js` → `http://localhost:8080` |
 | Other devices on the LAN | the `http://<LAN-IP>:8080` URL printed at startup (Option C) |
+| What's my LAN URL right now? | `node server.js --print-url` · or read `bookrecs-url.txt` |
+| Pin the advertised address | `BOOKRECS_LAN_IP=192.168.1.50 node server.js` |
 | Why can't devices reach the LAN IP? | `node deploy/lan-check.js` (or `npm run lan-check`) |
 | Prove the network path alone | `node deploy/lan-check.js --serve-test --port=8090` |
 | Pick a port | `node server.js --port=9090` (or `PORT=9090 node server.js`) |

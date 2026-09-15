@@ -530,9 +530,12 @@
           : `<p class="help" style="color:var(--danger)">The server found no usable LAN address, so other devices can’t reach it yet. Check the network cable/Wi-Fi, then re-open this page.</p>`;
         box.innerHTML = `
           <p class="help" style="margin-bottom:.4rem">Teacher’s own computer only: <code>${n.localUrl}</code></p>
-          <p class="help" style="margin-bottom:.2rem"><strong>Every other device should open:</strong></p>
+          <p class="help" style="margin-bottom:.2rem"><strong>Every other device should open:</strong>
+            ${n.primary && n.primary.via ? `<span class="help">auto-detected (${n.primary.iface || "?"} · ${n.primary.via})</span>` : ""}
+          </p>
           ${rows}
           <p class="help" style="margin-top:.5rem">${n.note}</p>
+          <p class="help">Same address is kept in <code>${n.urlFile || "bookrecs-url.txt"}</code> next to server.js, and re-checked every 20 s if the network changes.</p>
           <p class="help">Trouble? On this computer run <code>node deploy/lan-check.js</code> — it tells you what is blocking access.</p>`;
       } catch (e) {
         box.innerHTML = `<p class="help">Network info unavailable (${e.message})</p>`;

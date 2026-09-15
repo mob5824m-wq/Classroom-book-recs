@@ -8,6 +8,7 @@
  *   node deploy/lan-check.js              # full check
  *   node deploy/lan-check.js --port=9090  # check a specific port
  *   node deploy/lan-check.js --serve-test # publish a test page on the port
+ *   node deploy/lan-check.js --print-url  # just print the URL devices should use
  *
  * or:  npm run lan-check
  *
@@ -48,9 +49,81 @@ function isPrivateIp(ip) {
   );
 }
 
+/* ---- which address does this machine actually use to talk to its network? ----
+ * "First adapter we happen to enumerate" picks the wrong one all the time
+ * (VirtualBox/WSL/Bluetooth adapters sort first). The OS routing table knows
+ * which interface carries the default route, so we ask it. */
+function routePrimary() {
+  /* Manual override wins: BOOKRECS_LAN_IP=192.168.1.50 pins the advertised
+   * address (multi-NIC machines, or a server behind a reverse proxy). */
+  const pinned = String(process.env.BOOKRECS_LAN_IP || "").trim();
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(pinned)) return { ip: pinned, via: "BOOKRECS_LAN_IP" };
+
+  const probes =
+    PLATFORM === "win32"
+      ? [["route", ["print", "0.0.0.0"]]]
+      : PLATFORM === "darwin"
+      ? [["route", ["-n", "get", "default"]], ["ipconfig", ["getifaddr", "en0"]]]
+      : [["ip", ["route", "get", "8.8.8.8"]], ["ip", "-4", "-o", "addr", "show", "scope", "global"].slice(0)];
+
+  for (const probe of probes) {
+    const out = shRun(probe[0], probe[1]).out;
+    if (!out) continue;
+
+    // Linux: "8.8.8.8 via 192.168.1.1 dev wlp3s0 src 192.168.1.50 uid 1000"
+    const src = out.match(/\bsrc\s+(\d+\.\d+\.\d+\.\d+)/);
+    if (src) return { ip: src[1], via: "default route" };
+
+    // Linux fallback: "2: wlp3s0    inet 192.168.1.50/24 brd ... scope global wlp3s0"
+    const addrLine = out
+      .split(/\r?\n/)
+      .map((l) => l.match(/inet (\d+\.\d+\.\d+\.\d+)\/\d+.*scope global (\S+)/))
+      .filter(Boolean)[0];
+    if (addrLine) return { ip: addrLine[1], iface: addrLine[2], via: "global scope address" };
+
+    // macOS/BSD: "route: default via 192.168.1.1\n interface: en0"
+    const iface = out.match(/interface:\s*(\S+)/);
+    if (iface) return { iface: iface[1], via: "default route" };
+
+    // Windows: "          0.0.0.0    0.0.0.0    192.168.1.1   192.168.1.50   291"
+    let best = null;
+    out.split(/\r?\n/).forEach((line) => {
+      if (!/^\s*0\.0\.0\.0\s+0\.0\.0\.0\s/.test(line)) return;
+      const f = line.trim().split(/\s+/);
+      if (f.length < 5 || !/^\d+\.\d+\.\d+\.\d+$/.test(f[3])) return;
+      const metric = Number(f[4]) || 0;
+      if (!best || metric < best.metric) best = { ip: f[3], metric };
+    });
+    if (best) return { ip: best.ip, via: "default route" };
+  }
+  return {};
+}
+
+let _routeCache = { at: 0, val: {} };
+function primaryRoute(force) {
+  const now = Date.now();
+  if (!force && now - _routeCache.at < 5000) return _routeCache.val;
+  _routeCache = { at: now, val: routePrimary() };
+  return _routeCache.val;
+}
+
+/** Clear the cache so a re-detect sees the current network state. */
+function refreshNetwork() {
+  return primaryRoute(true);
+}
+
+/** Classify an address so we never advertise something a device can't use. */
+function classifyKind(ip) {
+  if (ip.startsWith("169.254.")) return "apipa"; // no DHCP lease
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip)) return "cgnat"; // CGNAT / Tailscale
+  if (!isPrivateIp(ip)) return "public"; // not a LAN address at all
+  return "usable";
+}
+
 /**
- * Every usable IPv4 address on this machine, best guess first.
- * kind: "usable" | "apipa" (no DHCP lease) | "cgnat" (100.64/10) | "public"
+ * Every IPv4 address on this machine that a device could plausibly use, best
+ * guess first. `primary` = the address the OS routing table says is the default
+ * one. kind: "usable" | "apipa" | "cgnat" | "public".
  */
 function lanAddresses() {
   const out = [];
@@ -59,16 +132,39 @@ function lanAddresses() {
     (ifaces[name] || []).forEach((a) => {
       const isV4 = a.family === "IPv4" || a.family === 4;
       if (!isV4 || a.internal || SKIP_IFACE.test(name)) return;
-      const ip = a.address;
-      let kind = "usable";
-      if (ip.startsWith("169.254.")) kind = "apipa";
-      else if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip)) kind = "cgnat";
-      else if (!isPrivateIp(ip)) kind = "public";
-      out.push({ name, ip, netmask: a.netmask || "", cidr: a.cidr || "", kind });
+      out.push({
+        name,
+        ip: a.address,
+        netmask: a.netmask || "",
+        cidr: a.cidr || "",
+        kind: classifyKind(a.address),
+        pinned: false,
+      });
     });
   });
+
+  const prim = primaryRoute();
+
+  // A pinned address (BOOKRECS_LAN_IP) may be a NAT/proxy address that isn't on
+  // any local adapter — still worth advertising, because the app answers on it.
+  if (prim.ip && !out.some((a) => a.ip === prim.ip)) {
+    out.push({
+      name: prim.via === "BOOKRECS_LAN_IP" ? "pinned" : prim.iface || "default route",
+      ip: prim.ip,
+      netmask: "",
+      cidr: "",
+      kind: classifyKind(prim.ip),
+      pinned: prim.via === "BOOKRECS_LAN_IP",
+    });
+  }
+
+  out.forEach((a) => {
+    a.primary = !!((prim.ip && prim.ip === a.ip) || (prim.iface && prim.iface === a.name));
+  });
+
   const rank = (a) => {
     if (a.kind !== "usable") return 3;
+    if (a.primary) return -1; // the adapter with the default route — what devices share
     if (/^192\.168\./.test(a.ip)) return 0;
     if (/^10\./.test(a.ip)) return 1;
     if (/^172\.(1[6-9]|2\d|3[01])\./.test(a.ip)) return 1;
@@ -77,12 +173,46 @@ function lanAddresses() {
   return out.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
 
-/** The URLs to type on a phone / another laptop. */
+/**
+ * The URLs to type on a phone / another laptop. An address the user pinned with
+ * BOOKRECS_LAN_IP is always honoured, even if it isn't on a local adapter (NAT,
+ * reverse proxy, cloud public IP).
+ */
 function lanUrls(port) {
   return lanAddresses()
-    .filter((a) => a.kind === "usable" || a.kind === "cgnat")
+    .filter((a) => a.pinned || a.kind === "usable" || a.kind === "cgnat")
     .map((a) => `http://${a.ip}:${port}`);
 }
+
+/** The single best URL to hand out (auto-detected primary adapter wins). */
+function bestUrl(port) {
+  const urls = lanUrls(port);
+  return urls.length ? urls[0] : "";
+}
+
+/**
+ * Which address to hand out, and how it was chosen. `routed` false means the OS
+ * gave us no default route (offline / container); `gatewayIsLinkLocal` means the
+ * default route uses a link-local address — no DHCP lease, so no real LAN yet.
+ */
+function primaryInfo(port) {
+  const prim = primaryRoute();
+  const list = lanAddresses();
+  const chosen =
+    list.find((a) => a.pinned) ||
+    list.find((a) => a.primary && (a.kind === "usable" || a.kind === "cgnat")) ||
+    list.find((a) => a.kind === "usable");
+  return {
+    ip: chosen ? chosen.ip : "",
+    iface: chosen ? chosen.name : "",
+    url: chosen ? `http://${chosen.ip}:${port || 8080}` : "",
+    via: prim.via || "",
+    kind: chosen ? chosen.kind : "none",
+    routed: !!(prim.ip || prim.iface),
+    gatewayIsLinkLocal: /^169\.254\./.test(prim.ip || ""),
+  };
+}
+
 
 /* --------------------------------- output ---------------------------------- */
 
@@ -234,8 +364,15 @@ async function run(opts) {
     info("Inside Docker/WSL/VM? Publish the port (docker run -p 8080:8080) or run the");
     info("server on the host itself. A LAN IP only works for devices on the same network.");
   }
+  const prim = primaryInfo(port);
+  if (prim.ip)
+    ok(`auto-detected for the banner + bookrecs-url.txt: ${prim.url}  (${prim.iface}${prim.via ? " · " + prim.via : ""})`);
+  if (prim.gatewayIsLinkLocal)
+    warn("The default route uses a link-local (169.254.x) address — no DHCP lease, so this machine isn't really on the LAN yet.");
+  else if (!prim.routed)
+    warn("No default route found — this machine has no working network (or it's a container without one).");
   addrs.forEach((a) => {
-    if (a.kind === "usable") ok(`${a.ip}  (${a.name}${a.netmask ? " · mask " + a.netmask : ""})  → http://${a.ip}:${port}`);
+    if (a.kind === "usable") ok(`${a.ip}  (${a.name}${a.netmask ? " · mask " + a.netmask : ""}${a.primary ? " · default route" : ""})  → http://${a.ip}:${port}`);
     else if (a.kind === "apipa") warn(`${a.ip} (${a.name}) is an APIPA address — no DHCP lease, so the network is broken/unjoined. Reconnect Wi-Fi.`);
     else if (a.kind === "public") warn(`${a.ip} (${a.name}) is a PUBLIC address — it is not a LAN IP. Devices on your Wi-Fi need the 192.168/10.x address.`);
     else warn(`${a.ip} (${a.name}) is in 100.64.0.0/10 — CGNAT/Tailscale range; it works only for peers of that overlay, not for classroom Wi-Fi.`);
@@ -390,7 +527,26 @@ if (require.main === module) {
   const hostFlag = argv.map((a) => a.match(/^--host=(.+)$/)).find(Boolean);
   const envPort = parseInt(process.env.PORT || process.env.BOOKRECS_PORT || "", 10) || 0;
   const port = (portFlag && Number(portFlag[1])) || envPort || readSavedPort() || 8080;
+
+  // Just the URL — for a desktop shortcut, an email to the class, a shell script.
+  if (argv.includes("--print-url") || argv.includes("--url")) {
+    const url = bestUrl(port);
+    console.log(url || `http://localhost:${port}`);
+    process.exit(url ? 0 : 1);
+  }
+
   run({ port, host: (hostFlag && hostFlag[1]) || "0.0.0.0", serveTest: argv.includes("--serve-test") });
 }
 
-module.exports = { run, lanAddresses, lanUrls, probeHttp, probeListen, isPrivateIp };
+module.exports = {
+  run,
+  lanAddresses,
+  lanUrls,
+  bestUrl,
+  primaryInfo,
+  primaryRoute,
+  refreshNetwork,
+  probeHttp,
+  probeListen,
+  isPrivateIp,
+};

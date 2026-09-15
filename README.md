@@ -38,7 +38,9 @@ Open **http://localhost:8080** and sign in:
 ### On other devices (classroom laptops, tablets, phones)
 
 `localhost` only works on the machine running the server. Other devices use this
-machine's **LAN IP**, which the server prints at startup:
+machine's **LAN IP** — the server finds it automatically (the adapter with the OS
+default route), prints it, keeps it in `bookrecs-url.txt`, and re-checks it every
+20 seconds:
 
 ```
   Other devices:   http://192.168.1.50:8080   ← use THIS on phones/laptops
@@ -53,6 +55,7 @@ Troubleshooting and how to reach the app from a different network (school):
 
 ```bash
 node deploy/lan-check.js          # or: npm run lan-check
+node server.js --print-url        # just the URL, for a shortcut / an email
 ```
 
 ## How It Works
