@@ -695,6 +695,9 @@ function olDocToBook(doc) {
     pages: Number(doc.number_of_pages_median) || null,
     firstPublished: doc.first_publish_year || null,
     isbn: (doc.isbn || [])[0] || "",
+    // Kept so an owned copy is recognised even when Open Library lists a
+    // different printing first.
+    isbns: (doc.isbn || []).slice(0, 20),
     coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : "",
     openLibraryKey: key,
     openLibraryUrl: key ? `https://openlibrary.org${key}` : "",
@@ -865,6 +868,59 @@ function isbnKey(s) {
   return String(s || "").replace(/\D/g, "");
 }
 
+/* Words that say nothing about WHICH book it is: "Holes: A Novel" is Holes. */
+const TITLE_NOISE = /^(a|an|the)?\s*(novel|novels|book|books|memoir|graphic novel|series|edition|unabridged|volume|vol)\b/;
+
+/* The parts of a title that name the book: the whole thing, plus each side of a
+ * colon, minus series tags in brackets and non-titles like "A Novel".
+ *   "Percy Jackson: The Lightning Thief" -> whole, "percy jackson", "lightning thief"
+ *   "Wonder (Wonder, #1)"                -> "wonder"
+ *   "Holes: A Novel"                     -> "holes"
+ * `simple` = no subtitle of its own, so the other title may just be this one
+ * plus a subtitle ("Fireborn" vs "Fireborn: Twelve and the Frozen Forest"). */
+function titleInfo(title) {
+  const raw = String(title || "").replace(/\([^)]*\)/g, " ").replace(/\[[^\]]*\]/g, " ");
+  const parts = raw
+    .split(/\s*[:–—]\s*|\s+-\s+|\s*\/\s*/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .filter((p) => !TITLE_NOISE.test(p.toLowerCase()))
+    .map(titleKey)
+    .filter(Boolean);
+  return {
+    full: titleKey(raw),
+    segments: [...new Set(parts)],
+    simple: parts.length <= 1,
+  };
+}
+
+/* Is this the same book under a different title, edition or printing?
+ * Deliberately conservative: an exact match on the whole title or on a title
+ * part, and the "this one is just that one plus a subtitle" case. A shared
+ * series name is NOT enough — we already own "Percy Jackson: The Lightning
+ * Thief", but "Percy Jackson: The Sea of Monsters" is still a book we don't
+ * have and a student may well want it. */
+function sameBook(aTitle, bTitle) {
+  const a = titleInfo(aTitle);
+  const b = titleInfo(bTitle);
+  const pairs = [[a.full, b.full]];
+  a.segments.forEach((s) => pairs.push([s, b.full]));
+  b.segments.forEach((s) => pairs.push([a.full, s]));
+  for (const [x, y] of pairs) {
+    if (x && y && x === y) return true;
+  }
+  if (a.simple && b.segments.includes(a.full)) return true;
+  if (b.simple && a.segments.includes(b.full)) return true;
+  return false;
+}
+
+/* Every ISBN a record carries (Open Library lists many per work, and the one a
+ * teacher typed is often not the first). */
+function isbnsOf(book) {
+  const list = Array.isArray(book.isbns) && book.isbns.length ? book.isbns : [book.isbn];
+  return list.map(isbnKey).filter(Boolean);
+}
+
 /* Builds both recommendation lists for a student.
  * async because the "we don't have it" list is grabbed live from Open Library
  * (see the Open Library section). Pass { refresh, exclude } to ask for a fresh
@@ -901,15 +957,19 @@ async function computeRecommendations(userId, opts = {}) {
   ).slice(0, libraryLimit);
 
   // ---- 2. Books we don't have, to find elsewhere ----
-  // Owned titles/ISBNs, so we never suggest a book that is already on the shelf
-  // (an owned copy means the student can just borrow it from us).
-  const ownedTitles = new Set();
+  // The whole point of this list is that it is DIFFERENT from the one above, so
+  // a candidate is dropped if it is a book we own — by ISBN (any printing) or by
+  // title (the same book under another title, e.g. Open Library's "The
+  // Lightning Thief" for our "Percy Jackson: The Lightning Thief").
+  const ownedBooks = state.books.filter((b) => b.inLibrary !== false);
   const ownedIsbns = new Set();
-  state.books.forEach((b) => {
-    if (b.inLibrary === false) return; // not ours, so it can be suggested
-    if (b.title) ownedTitles.add(titleKey(b.title));
-    if (b.isbn) ownedIsbns.add(isbnKey(b.isbn));
-  });
+  ownedBooks.forEach((b) => isbnsOf(b).forEach((i) => ownedIsbns.add(i)));
+
+  const isOwned = (book) => {
+    const isbns = isbnsOf(book);
+    if (isbns.some((i) => ownedIsbns.has(i))) return true;
+    return ownedBooks.some((o) => sameBook(o.title, book.title));
+  };
 
   // Books the teacher marked "we don't have this" lead the list, whatever the
   // source is — they are hand-picked, and one of them may later be purchased.
@@ -918,25 +978,40 @@ async function computeRecommendations(userId, opts = {}) {
     prefs
   );
 
-  const takeFrom = (books) => {
+  const chosen = [];              // titles already in the list (same-book aware)
+  const isTaken = (title) => chosen.some((t) => sameBook(t, title));
+  const authorsInLibrary = new Set(
+    library.map((b) => String(b.author || "").toLowerCase().trim()).filter(Boolean)
+  );
+  const authorCount = new Map();  // so one prolific author can't fill the list
+  const MAX_PER_AUTHOR = 2;
+
+  // Picks up to `limit` books from a candidate list, dropping anything that is
+  // already on this list, already on our shelves, or was waved away with the
+  // "New ideas" button. Books it can't take never count against an author.
+  const takeFrom = (books, { skipLibraryAuthors = false, limit = Infinity } = {}) => {
     const out = [];
-    books.forEach((b) => {
-      const tk = titleKey(b.title);
-      const isbn = isbnKey(b.isbn);
-      if (!tk) return;
-      if (ownedTitles.has(tk)) return;                 // it's on our shelf
-      if (isbn && ownedIsbns.has(isbn)) return;        // same book, other printing
-      if (excluded.has(tk)) return;                    // student said "not this one" (refresh)
-      if (seen.has(tk)) return;                        // no duplicates in the list
-      seen.add(tk);
+    for (const b of books) {
+      if (out.length >= limit) break;
+      if (!b.title) continue;
+      if (isTaken(b.title)) continue;                  // already on this list
+      if (isOwned(b)) continue;                        // it's on our shelf
+      if (excluded.some((t) => sameBook(t, b.title))) continue; // "not this one"
+      const author = String(b.author || "").toLowerCase().trim();
+      if (author) {
+        if ((authorCount.get(author) || 0) >= MAX_PER_AUTHOR) continue;
+        // Prefer books by authors we don't already have on the shelves: the two
+        // lists should offer the student something new, not more of the same.
+        if (skipLibraryAuthors && authorsInLibrary.has(author)) continue;
+        authorCount.set(author, (authorCount.get(author) || 0) + 1);
+      }
+      chosen.push(b.title);
       out.push(b);
-    });
+    }
     return out;
   };
-  const seen = new Set();
-  const excluded = new Set(
-    String(opts.exclude || "").split(",").map((t) => titleKey(t)).filter(Boolean)
-  );
+  // Titles the student just said "not this one" about (the 🔄 New ideas button)
+  const excluded = String(opts.exclude || "").split(",").map((t) => t.trim()).filter(Boolean);
 
   // What the teacher wants students to read about, then live Open Library
   // results, then the built-in pool (which always has matches to offer).
@@ -959,15 +1034,22 @@ async function computeRecommendations(userId, opts = {}) {
         .filter((b) => b.title && b.author);
       // Scored exactly like our own books, so a poor match isn't shown at all.
       const ranked = rankBooks(olBooks, prefs);
-      const filled = takeFrom(ranked).slice(0, generalLimit - general.length);
-      if (filled.length) live = true;
-      general.push(...filled);
+      // First pass favours authors we don't already have on the shelves, so the
+      // second list reads as a genuinely different set of books. If that leaves
+      // the list short, a second pass allows those authors back (still capped
+      // per author) rather than showing the student fewer books.
+      const before = general.length;
+      general.push(...takeFrom(ranked, { skipLibraryAuthors: true, limit: generalLimit - general.length }));
+      if (general.length < generalLimit) {
+        general.push(...takeFrom(ranked, { limit: generalLimit - general.length }));
+      }
+      if (general.length > before) live = true; // the list really is live now
     }
   }
 
   // Top up from the built-in pool: no internet, no matches, or Open Library off.
   if (general.length < generalLimit) {
-    general.push(...takeFrom(rankBooks(GENERAL_BOOK_POOL, prefs)).slice(0, generalLimit - general.length));
+    general.push(...takeFrom(rankBooks(GENERAL_BOOK_POOL, prefs), { limit: generalLimit - general.length }));
   }
 
   const maxScore = maxPossibleScore(prefs) || 1;

@@ -12,6 +12,7 @@ Built with **vanilla HTML, CSS, and JavaScript** — no frameworks, no build ste
 - **Personalized Recommendations** — two separate lists, both matched to the questionnaire answers:
   - **🏫 From Our Class Library** — books on your shelves, ready to borrow
   - **🌎 Books We Don't Have (Yet)** — grabbed live from [Open Library](https://openlibrary.org) using the student's genres and themes, with a **🔄 New ideas** button for a different set; each book links to its Open Library page and says whether it can be read or borrowed there for free
+  - The two lists never repeat a book. A title we already own is skipped even when Open Library lists it under a different name, subtitle or printing ("The Lightning Thief" vs. *Percy Jackson: The Lightning Thief*), an author already on our shelves won't fill up the list (max 2 books each), and a different book in a series we only partly own — e.g. *Percy Jackson: The Sea of Monsters* — is still a fair suggestion
 - **Book Catalog** — browse the full collection with search and genre filters
 
 ### For Teachers
