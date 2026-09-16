@@ -57,7 +57,9 @@ the host's firewall (`sudo ufw allow 8080/tcp`, or on Windows:
 `netsh advfirewall firewall add rule name="Book Recs 8080" dir=in action=allow protocol=TCP localport=8080`).
 
 Troubleshooting and how to reach the app from a different network (school):
-[HOSTING.md](HOSTING.md) — or run the built-in check:
+[HOSTING.md](HOSTING.md) — or run the built-in check. Hosting this **together
+with [classroomlib](https://github.com/mob5824m-wq/classroomlib) on one Pi**
+(two DuckDNS sites)? See [deploy/dual-host-pi.md](deploy/dual-host-pi.md).
 
 ```bash
 node deploy/lan-check.js          # or: npm run lan-check

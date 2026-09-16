@@ -130,6 +130,41 @@ Students at school
 
 ---
 
+## Two apps on one machine — Book Recs + Classroom Library (two DuckDNS sites)
+
+Same idea as Option B, but one computer (e.g. a Raspberry Pi 4) serves **both**
+apps, each on its **own DuckDNS hostname** with free HTTPS. Full guide:
+**[deploy/dual-host-pi.md](deploy/dual-host-pi.md)** — the short version:
+
+```
+https://mybookrecs.duckdns.org      https://myroomlibrary.duckdns.org
+        \__ ONE Caddy (443+80, routes by hostname) __/
+                |                              |
+        localhost:8080                 localhost:8081
+        Book Recs (this repo)          Classroom Library
+```
+
+- **Ports are split:** Book Recs `:8080`, Classroom Library `:8081` — pinned
+  in the systemd units (`BOOKRECS_PORT=8080` / `CLASSROOM_PORT=8081`) so they
+  can never drift into each other. Env wins over the saved admin port setting.
+- **One Caddy, not two:** only one process may bind 443. Use the shared
+  [`Caddyfile.dual.example`](Caddyfile.dual.example) — the single-site
+  `Caddyfile.example` files are for one-app machines only.
+- **One DuckDNS updater:** list both hostnames comma-separated in
+  `deploy/duckdns.conf` (`DUCKDNS_DOMAINS=mybookrecs,myroomlibrary`) and run
+  the updater + cron job from **one** repo only.
+- **Router** forwards **both** 443 → Pi:443 **and** 80 → Pi:80 (cert renewals
+  use port 80); **firewall** allows both app ports
+  (`sudo ufw allow 8080,8081/tcp`) so the LAN URLs
+  (`http://<pi-ip>:8080` and `http://<pi-ip>:8081`) keep working at home.
+- Nothing else collides: cookies (`bookrecs_session` vs `classroom_session`),
+  data files and systemd unit names are all distinct.
+
+This repo defines that contract — classroomlib mirrors it (its checklist is at
+the bottom of `deploy/dual-host-pi.md`).
+
+---
+
 ## Option C — LAN only (same network, no internet needed)
 
 Everything else in this file is about reaching the app from *outside* your home.
@@ -267,7 +302,10 @@ node server.js --port=9090      # or: PORT=9090 node server.js
 
 Keep `8080` unless you have a reason; every URL you've already shared contains it.
 To bind a different interface (e.g. `127.0.0.1` only, for a machine behind Caddy),
-use `--host=` or `BOOKRECS_HOST=`.
+use `--host=` or `BOOKRECS_HOST=`. Co-hosting with Classroom Library on one Pi?
+Don't change the port here — the systemd unit pins `BOOKRECS_PORT=8080` (env wins
+over this setting) and the other app takes `8081`: see
+[deploy/dual-host-pi.md](deploy/dual-host-pi.md).
 
 ---
 
@@ -379,6 +417,8 @@ Full setup, firewall commands and a troubleshooting table: **Option C** above;
 | Slow Open Library | `BOOKRECS_OL_TIMEOUT_MS=2500 node server.js` (default 5000) |
 | Easiest public HTTPS | Cloudflare Tunnel (Option A) |
 | Own hostname + HTTPS | DuckDNS + Caddy (Option B) |
+| Book Recs + Library on one Pi | `deploy/dual-host-pi.md` + `Caddyfile.dual.example` (`:8080` / `:8081`) |
+| Update both DuckDNS hostnames | `DUCKDNS_DOMAINS=a,b` in `deploy/duckdns.conf`, updater run from one repo |
 | Auto-start (Linux) | systemd unit (above) |
 | Auto-start (Windows) | Startup folder `.bat` / NSSM |
 | Admin login | `admin` / `admin123` |

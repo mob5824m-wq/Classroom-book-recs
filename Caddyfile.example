@@ -3,6 +3,10 @@
 # This is the ONLY config file Caddy needs. Caddy automatically fetches and
 # renews a free Let's Encrypt certificate and routes HTTPS to the app.
 #
+# Hosting Book Recs AND Classroom Library on ONE machine (two DuckDNS sites)?
+# Don't use this file — use Caddyfile.dual.example instead (one shared Caddy
+# for both apps). Guide: deploy/dual-host-pi.md
+#
 # SETUP
 #   1. Rename this file to  Caddyfile   (same folder is fine)
 #   2. Replace mybookrecs.duckdns.org below with YOUR real DuckDNS hostname

@@ -1,0 +1,30 @@
+# Caddy configuration for running BOTH classroom apps on ONE machine
+# (e.g. a Raspberry Pi 4) with TWO DuckDNS hostnames and free HTTPS.
+#
+#   https://mybookrecs.duckdns.org    -> Book Recs         (localhost:8080)
+#   https://myroomlibrary.duckdns.org -> Classroom Library (localhost:8081)
+#
+# Only ONE Caddy runs on the machine: it owns ports 80+443 and routes each
+# hostname to its app. Caddy fetches and renews both Let's Encrypt
+# certificates automatically. Full walkthrough: deploy/dual-host-pi.md
+#
+# SETUP
+#   1. Copy this file to  Caddyfile  (same folder is fine for `caddy run`,
+#      or /etc/caddy/Caddyfile if Caddy runs as a system service).
+#   2. Replace the two hostnames below with YOUR real DuckDNS hostnames.
+#   3. Book Recs must listen on 8080, Classroom Library on 8081.
+#      The systemd units pin this (BOOKRECS_PORT / CLASSROOM_PORT) so the
+#      ports can never drift into each other — see deploy/dual-host-pi.md.
+#   4. Router: forward external 443 -> this computer -> 443
+#      AND external 80 -> this computer -> 80 (cert renewals use port 80).
+#   5. Run:  caddy run   (or: sudo systemctl enable --now caddy)
+#
+# Only hosting Book Recs on this machine? Use Caddyfile.example instead.
+
+mybookrecs.duckdns.org {
+	reverse_proxy localhost:8080
+}
+
+myroomlibrary.duckdns.org {
+	reverse_proxy localhost:8081
+}
