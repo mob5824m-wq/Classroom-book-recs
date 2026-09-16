@@ -74,6 +74,8 @@
         <input type="text" class="search-input" id="book-search" placeholder="Search books...">
         <select id="book-filter-pick">
           <option value="">All Books</option>
+          <option value="shelf">We Have It (on our shelves)</option>
+          <option value="wanted">We Don't Have It (suggested to students)</option>
           <option value="pick">Teacher Picks Only</option>
           <option value="not-pick">Not Teacher Picks</option>
         </select>
@@ -232,8 +234,14 @@
           </div>
         </div>
         <div class="form-group">
-          <label for="setting-maxRecs">Max Recommendations per Student</label>
-          <input type="number" id="setting-maxRecs" min="1" max="50" value="10">
+          <label for="setting-libraryRecs">From Our Class Library — books per student</label>
+          <input type="number" id="setting-libraryRecs" min="0" max="25" value="5">
+          <p class="help">Books you have on the shelves. Shown first on a student's recommendations page.</p>
+        </div>
+        <div class="form-group">
+          <label for="setting-generalRecs">Books We Don't Have — picks per student</label>
+          <input type="number" id="setting-generalRecs" min="0" max="25" value="5">
+          <p class="help">Suggestions to find at the public library or a bookstore. Books you mark “we don't have this” come first, then a built-in list of popular titles — anything you already own is never suggested here.</p>
         </div>
         <div class="flex gap-1 mt-2">
           <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
@@ -367,6 +375,10 @@
       <div class="form-group">
         <label><input type="checkbox" id="book-pick" style="width:auto;margin-right:.5rem"> ⭐ Teacher Pick</label>
         <p class="help">Teacher picks are highlighted and get a recommendation boost</p>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="book-not-owned" style="width:auto;margin-right:.5rem"> 🌎 We don't have this book in our library</label>
+        <p class="help">Adds it to the “Books We Don't Have (Yet)” list on student recommendations, instead of the class library. It won't show up in the catalog or as a book students can borrow.</p>
       </div>
       <div class="flex gap-1 mt-2">
         <button class="btn btn-primary" onclick="saveBook()">Save Book</button>
@@ -505,7 +517,8 @@
         document.getElementById("setting-schoolName").value = s.schoolName || "";
         document.getElementById("setting-room").value = s.room || "";
         document.getElementById("setting-port").value = s.port || 8080;
-        document.getElementById("setting-maxRecs").value = s.maxRecsPerStudent || 10;
+        document.getElementById("setting-libraryRecs").value = s.libraryRecsPerStudent ?? 5;
+        document.getElementById("setting-generalRecs").value = s.generalRecsPerStudent ?? 5;
 
         loadNetworkInfo();
       } catch (e) {
@@ -571,14 +584,19 @@
       const search = document.getElementById("book-search").value.toLowerCase();
       const pickFilter = document.getElementById("book-filter-pick").value;
       let books = (stateData.books || []).filter(b => {
-        const matchSearch = !search || b.title.toLowerCase().includes(search) || b.author.toLowerCase().includes(search);
-        const matchPick = !pickFilter || (pickFilter === "pick" ? b.teacherPick : !b.teacherPick);
+        const searchable = `${b.title} ${b.author}`.toLowerCase();
+        const matchSearch = !search || searchable.includes(search);
+        let matchPick = true;
+        if (pickFilter === "pick") matchPick = !!b.teacherPick;
+        else if (pickFilter === "not-pick") matchPick = !b.teacherPick;
+        else if (pickFilter === "shelf") matchPick = b.inLibrary !== false;
+        else if (pickFilter === "wanted") matchPick = b.inLibrary === false;
         return matchSearch && matchPick;
       });
 
       document.getElementById("books-table").innerHTML = books.map(b => `
         <tr>
-          <td><strong>${b.title}</strong></td>
+          <td><strong>${b.title}</strong> ${b.inLibrary === false ? '<span class="genre-tag" title="Students see this in the \'Books We Don\'t Have\' list">🌎 we don\'t have it</span>' : ''}</td>
           <td>${b.author}</td>
           <td>${(b.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join(' ')}</td>
           <td>${b.pages || '—'}</td>
@@ -603,6 +621,7 @@
       document.getElementById("book-pages").value = "";
       document.getElementById("book-difficulty").value = "";
       document.getElementById("book-pick").checked = false;
+      document.getElementById("book-not-owned").checked = false;
       openModal("book-modal");
     }
 
@@ -624,6 +643,7 @@
       document.getElementById("book-cover").value = book.coverUrl || "";
       document.getElementById("book-isbn").value = book.isbn || "";
       document.getElementById("book-pick").checked = !!book.teacherPick;
+      document.getElementById("book-not-owned").checked = book.inLibrary === false;
       openModal("book-modal");
     }
 
@@ -644,6 +664,7 @@
         coverUrl: document.getElementById("book-cover").value.trim(),
         isbn: document.getElementById("book-isbn").value.trim(),
         teacherPick: document.getElementById("book-pick").checked,
+        inLibrary: !document.getElementById("book-not-owned").checked,
         approved: true,
         addedBy: App.me.id,
         addedAt: editId ? ((stateData.books||[]).find(b=>b.id===editId)||{}).addedAt || Date.now() : Date.now(),
@@ -1195,12 +1216,16 @@
         await App.api("/api/settings", { method: "GET" }); // verify admin
         const oldPort = stateData.settings.port || 8080;
         const newPort = parseInt(document.getElementById("setting-port").value) || 8080;
+        const libraryRecs = Math.max(0, parseInt(document.getElementById("setting-libraryRecs").value));
+        const generalRecs = Math.max(0, parseInt(document.getElementById("setting-generalRecs").value));
         stateData.settings = {
           appName: document.getElementById("setting-appName").value,
           schoolName: document.getElementById("setting-schoolName").value,
           room: document.getElementById("setting-room").value,
           port: newPort,
-          maxRecsPerStudent: parseInt(document.getElementById("setting-maxRecs").value) || 10,
+          libraryRecsPerStudent: isNaN(libraryRecs) ? 5 : libraryRecs,
+          generalRecsPerStudent: isNaN(generalRecs) ? 5 : generalRecs,
+          maxRecsPerStudent: (isNaN(libraryRecs) ? 5 : libraryRecs) + (isNaN(generalRecs) ? 5 : generalRecs),
         };
         await App.postState(stateData);
         App.toast("Settings saved" + (newPort !== oldPort ? " — restart server to apply new port" : ""), "success");

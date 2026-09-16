@@ -23,7 +23,35 @@
     </div>
 
     <div id="recs-container">
-      <div class="book-grid" id="recs-grid"></div>
+      <!-- ===== 1. Books we have ===== -->
+      <section class="rec-section" id="library-section">
+        <div class="rec-section-head">
+          <h2>🏫 From Our Class Library</h2>
+          <span class="rec-count" id="library-count"></span>
+        </div>
+        <p class="text-muted rec-section-note">On our shelves right now — ask your teacher to borrow one.</p>
+        <div class="book-grid" id="library-grid"></div>
+        <div id="library-empty" class="empty-state" style="display:none">
+          <div class="icon">📚</div>
+          <h3>Nothing on our shelves matches yet</h3>
+          <p class="text-muted">Check the second list below, or ask your teacher to add more books.</p>
+        </div>
+      </section>
+
+      <!-- ===== 2. Books we don't have ===== -->
+      <section class="rec-section" id="general-section">
+        <div class="rec-section-head">
+          <h2>🌎 Books We Don't Have (Yet)</h2>
+          <span class="rec-count" id="general-count"></span>
+        </div>
+        <p class="text-muted rec-section-note">Not in our class library — great picks to look for at the public library or a bookstore.</p>
+        <div class="book-grid" id="general-grid"></div>
+        <div id="general-empty" class="empty-state" style="display:none">
+          <div class="icon">🌎</div>
+          <h3>No suggestions yet</h3>
+          <p class="text-muted">Tell your teacher what you like and they can add ideas here.</p>
+        </div>
+      </section>
     </div>
 
     <div id="no-recs" class="card" style="display:none">
@@ -46,8 +74,6 @@
   <div class="toast-container"></div>
   <script src="/js/app.js"></script>
   <script>
-    let bookMap = {};
-
     document.addEventListener("DOMContentLoaded", async () => {
       App.renderNav("recommendations");
       const user = await App.requireAuth(["student"]);
@@ -62,39 +88,79 @@
           return;
         }
 
-        // Get recommendations
+        // Two separate lists: books we have, and books we don't have
         const rdata = await App.api("/api/recommendations");
-        (rdata.books || []).forEach(b => bookMap[b.id] = b);
+        const library = rdata.library || [];
+        const general = rdata.general || [];
+        const limits = rdata.limits || {};
 
-        const recs = rdata.recommendations || [];
-        if (recs.length === 0) {
+        // A list the teacher switched off (0) is hidden rather than shown empty.
+        if (limits.library === 0) document.getElementById("library-section").style.display = "none";
+        if (limits.general === 0) document.getElementById("general-section").style.display = "none";
+
+        if (library.length === 0 && general.length === 0) {
           document.getElementById("no-recs").style.display = "";
           document.getElementById("recs-container").style.display = "none";
           return;
         }
 
-        document.getElementById("subtitle").textContent = `${recs.length} books matched to your preferences`;
-        document.getElementById("recs-grid").innerHTML = recs.map(renderRecCard).join("");
+        fillSection({
+          recs: library,
+          gridId: "library-grid",
+          emptyId: "library-empty",
+          countId: "library-count",
+        });
+        fillSection({
+          recs: general,
+          gridId: "general-grid",
+          emptyId: "general-empty",
+          countId: "general-count",
+        });
+
+        document.getElementById("subtitle").textContent = library.length && general.length
+          ? `${library.length} from our class library, ${general.length} more to find elsewhere`
+          : "Books matched to your preferences";
       } catch (e) {
         App.toast("Could not load recommendations", "error");
       }
     });
 
+    function fillSection({ recs, gridId, emptyId, countId }) {
+      const grid = document.getElementById(gridId);
+      const count = document.getElementById(countId);
+      if (!grid) return;
+      if (!recs.length) {
+        grid.innerHTML = "";
+        count.textContent = "";
+        document.getElementById(emptyId).style.display = "";
+        return;
+      }
+      grid.innerHTML = recs.map(renderRecCard).join("");
+      count.textContent = `${recs.length} book${recs.length !== 1 ? "s" : ""}`;
+      document.getElementById(emptyId).style.display = "none";
+    }
+
     function renderRecCard(rec) {
-      const book = bookMap[rec.bookId] || {};
-      const coverSrc = book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg` : '');
+      const coverSrc = rec.coverUrl || (rec.isbn ? `https://covers.openlibrary.org/b/isbn/${rec.isbn}-L.jpg` : '');
       const coverHtml = coverSrc
-        ? `<img src="${coverSrc}" alt="${book.title}" onerror="this.parentElement.innerHTML='<div class=no-cover><span>📖</span>${(book.title||'Unknown').replace(/'/g,'')}'">`
-        : `<div class="no-cover"><span>📖</span>${book.title || 'Unknown'}</div>`;
-      const pickBadge = book.teacherPick ? '<div class="teacher-pick-badge">⭐ Teacher Pick</div>' : '';
-      const scorePercent = Math.min(100, Math.round((rec.score / 30) * 100));
+        ? `<img src="${coverSrc}" alt="${rec.title}" onerror="this.parentElement.innerHTML='<div class=no-cover><span>📖</span>${(rec.title||'Unknown').replace(/'/g,'')}'">`
+        : `<div class="no-cover"><span>📖</span>${rec.title || 'Unknown'}</div>`;
+      const pickBadge = rec.teacherPick ? '<div class="teacher-pick-badge">⭐ Teacher Pick</div>' : '';
+      const whereBadge = rec.inLibrary
+        ? '<div class="where-badge in-library">📚 In our library</div>'
+        : '<div class="where-badge not-in-library">🌎 Not in our library</div>';
+      // Server sends a match % scaled to the student's answers; fall back to
+      // the old formula if an older payload arrives.
+      const scorePercent = typeof rec.match === "number"
+        ? rec.match
+        : Math.min(100, Math.round((rec.score / 30) * 100));
       return `
-        <div class="book-card rec-card" onclick='openModal(${JSON.stringify({...book, reason: rec.reason}).replace(/'/g, "&#39;")})' style="cursor:pointer">
-          <div class="cover">${coverHtml}${pickBadge}<div class="match-score">${scorePercent}% match</div></div>
+        <div class="book-card rec-card" onclick='openModal(${JSON.stringify(rec).replace(/'/g, "&#39;")})' style="cursor:pointer">
+          <div class="cover">${coverHtml}${pickBadge}${whereBadge}<div class="match-score">${scorePercent}% match</div></div>
           <div class="book-info">
-            <div class="book-title">${book.title || 'Unknown'}</div>
-            <div class="book-author">${book.author || ''}</div>
-            <div class="book-genres">${(book.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}</div>
+            <div class="book-title">${rec.title || 'Unknown'}</div>
+            <div class="book-author">${rec.author || ''}</div>
+            <div class="book-genres">${(rec.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}</div>
             ${rec.reason ? `<div class="rec-reason">${rec.reason}</div>` : ''}
           </div>
         </div>`;
@@ -105,10 +171,17 @@
       const coverHtml = coverSrc
         ? `<img src="${coverSrc}" alt="${book.title}" style="max-height:250px;border-radius:8px;margin-bottom:1rem" onerror="this.style.display='none'">`
         : '';
+      const availability = book.inLibrary
+        ? `<p style="background:rgba(67,97,238,.08);border-radius:8px;padding:.6rem .8rem;margin-bottom:1rem">📚 <strong>In our class library</strong> — ask your teacher to borrow it.</p>`
+        : `<p style="background:rgba(255,159,28,.12);border-radius:8px;padding:.6rem .8rem;margin-bottom:1rem">🌎 <strong>We don't have this one yet</strong> — look for it at your public library or a bookstore, or ask your teacher to add it to the class library.</p>`;
+      const findLink = !book.inLibrary
+        ? `<p style="margin-bottom:1rem"><a href="https://openlibrary.org/search?q=${encodeURIComponent(`${book.title} ${book.author || ""}`)}" target="_blank" rel="noopener">Find this book online →</a></p>`
+        : '';
       document.getElementById("modal-content").innerHTML = `
         ${coverHtml}
         <h2>${book.title}</h2>
         <p style="color:var(--text-muted);margin-bottom:1rem">by ${book.author}</p>
+        ${availability}
         <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem">
           ${(book.genres||[]).map(g => `<span class="genre-tag">${g}</span>`).join('')}
         </div>
@@ -119,6 +192,7 @@
           ${book.difficulty ? `<div>📊 ${book.difficulty}</div>` : ''}
           ${book.teacherPick ? `<div>⭐ Teacher Pick</div>` : ''}
         </div>
+        ${findLink}
       `;
       document.getElementById("book-modal").classList.add("open");
     }

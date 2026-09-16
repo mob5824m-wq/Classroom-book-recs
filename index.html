@@ -66,9 +66,10 @@
       // Load stats & featured
       try {
         const st = await App.getState();
-        const books = st.books || [];
+        // Count the books we actually have on the shelves; "we don't have it"
+        // suggestions are not part of the class library.
+        const books = (st.books || []).filter(b => b.inLibrary !== false);
         const students = (st.users || []).filter(u => u.role === "student");
-        const recs = st.recommendations || [];
 
         document.getElementById("stats-row").innerHTML = `
           <div class="stat-card"><div class="stat-number">${books.length}</div><div class="stat-label">Books</div></div>

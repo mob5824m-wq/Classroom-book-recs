@@ -9,13 +9,17 @@ Built with **vanilla HTML, CSS, and JavaScript** — no frameworks, no build ste
 ### For Students
 - **Unique Code Login** — each student gets a unique code (like `READ-7X2K`) instead of a name-based login
 - **Preferences Questionnaire** — answer questions about favorite genres, themes, mood, book length, and more
-- **Personalized Recommendations** — books are scored and ranked based on questionnaire answers
+- **Personalized Recommendations** — two separate lists, both matched to the questionnaire answers:
+  - **🏫 From Our Class Library** — books on your shelves, ready to borrow
+  - **🌎 Books We Don't Have (Yet)** — suggestions to look for at the public library or a bookstore
 - **Book Catalog** — browse the full collection with search and genre filters
 
 ### For Teachers
 - **Teacher Account** — admin dashboard to manage everything
 - **Book Database** — add, edit, and delete books with genres, themes, mood, difficulty, and cover images
 - **Teacher Picks** — highlight recommended books with a ⭐ badge and recommendation boost
+- **Books We Don't Have** — tick *"We don't have this book in our library"* on any book to suggest it as a "find it elsewhere" pick; it skips the catalog and the class-library list
+- **Two Lists, Your Numbers** — Settings ▸ *From Our Class Library* and *Books We Don't Have* set how many of each a student sees (5 + 5 by default, 0 hides a list)
 - **Student Management** — add students individually or in bulk, view and print unique codes
 - **Questionnaire Responses** — see how students answered their preference questions
 - **Recommendation Overview** — view what each student is matched with

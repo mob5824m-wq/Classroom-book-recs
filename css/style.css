@@ -533,6 +533,59 @@ body.dark {
   margin-top: .5rem;
 }
 
+/* ---- recommendation sections (class library vs. books we don't have) ---- */
+.rec-section {
+  margin-bottom: 2.5rem;
+}
+
+.rec-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: .5rem;
+}
+
+.rec-section-head h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.rec-section .rec-count {
+  font-size: .85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rec-section .rec-section-note {
+  margin: .5rem 0 1.25rem;
+  font-size: .9rem;
+}
+
+/* Where to find this book: in our library, or somewhere else */
+.rec-card .where-badge {
+  position: absolute;
+  bottom: .5rem;
+  left: .5rem;
+  padding: .15rem .5rem;
+  border-radius: 20px;
+  font-size: .68rem;
+  font-weight: 700;
+  z-index: 2;
+}
+
+.rec-card .where-badge.in-library {
+  background: rgba(67, 97, 238, .9);
+  color: #fff;
+}
+
+.rec-card .where-badge.not-in-library {
+  background: var(--warning);
+  color: var(--text);
+}
+
 /* ---- search / filter bar ---- */
 .filter-bar {
   display: flex;

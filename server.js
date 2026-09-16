@@ -128,7 +128,11 @@ function defaultState() {
       schoolName: "",
       room: "",
       port: DEFAULT_PORT,
-      maxRecsPerStudent: 10,
+      // Recommendations are handed out as two separate lists: books on our
+      // shelves, and books we don't own (to find at the public library).
+      libraryRecsPerStudent: 5,
+      generalRecsPerStudent: 5,
+      maxRecsPerStudent: 10, // legacy total, kept so older data still loads
       defaultPassword: "read123",
     },
   };
@@ -438,10 +442,174 @@ const DEFAULT_QUESTIONS = [
   { id: "anything_else", question: "Anything else you want your teacher to know about what you like to read?", type: "text" },
 ];
 
+/* Books we don't own, used to fill the "find it elsewhere" half of a student's
+ * recommendations. They never appear in the catalog, only as suggestions, so a
+ * classroom always has something to offer when the shelves are thin (or when
+ * the machine has no internet). Teacher-added books marked "we don't have this"
+ * come first — see computeRecommendations(). */
+const GENERAL_BOOK_POOL = [
+  { title: "Harry Potter and the Sorcerer's Stone", author: "J.K. Rowling", isbn: "9780590353427", genres: ["Fantasy", "Adventure"], themes: ["Magic & Supernatural", "Friendship", "Coming of age"], mood: "Action-packed", setting: "Another world / fantasy realm", pace: "mixed", pages: 309, difficulty: "medium" },
+  { title: "The Hunger Games", author: "Suzanne Collins", isbn: "9780439023481", genres: ["Sci-Fi", "Adventure"], themes: ["Survival", "Justice", "Coming of age"], mood: "Dark and intense", setting: "Futuristic / space", pace: "fast", pages: 374, difficulty: "medium" },
+  { title: "The Wild Robot", author: "Peter Brown", isbn: "9780316381994", genres: ["Sci-Fi", "Adventure"], themes: ["Nature", "Survival", "Technology"], mood: "Emotional and heartfelt", setting: "Wilderness / nature", pace: "mixed", pages: 279, difficulty: "easy" },
+  { title: "Amari and the Night Brothers", author: "B.B. Alston", isbn: "9780062975171", genres: ["Fantasy", "Mystery"], themes: ["Magic & Supernatural", "Identity", "Friendship"], mood: "Action-packed", setting: "Modern day", pace: "fast", pages: 416, difficulty: "medium" },
+  { title: "Front Desk", author: "Kelly Yang", isbn: "9781338151794", genres: ["Realistic Fiction"], themes: ["Social Issues", "Family", "Justice"], mood: "Emotional and heartfelt", setting: "Modern day", pace: "mixed", pages: 286, difficulty: "easy" },
+  { title: "New Kid", author: "Jerry Craft", isbn: "9780062691194", genres: ["Graphic Novels", "Realistic Fiction"], themes: ["Identity", "Friendship", "Social Issues"], mood: "Light and fun", setting: "School", pace: "mixed", pages: 256, difficulty: "easy" },
+  { title: "Smile", author: "Raina Telgemeier", isbn: "9780545132060", genres: ["Graphic Novels", "Realistic Fiction"], themes: ["Coming of age", "Family", "Identity"], mood: "Emotional and heartfelt", setting: "School", pace: "mixed", pages: 224, difficulty: "easy" },
+  { title: "Because of Winn-Dixie", author: "Kate DiCamillo", isbn: "9780763680862", genres: ["Realistic Fiction"], themes: ["Friendship", "Family"], mood: "Emotional and heartfelt", setting: "Small town", pace: "slow", pages: 182, difficulty: "easy" },
+  { title: "Esperanza Rising", author: "Pam Muñoz Ryan", isbn: "9780439120425", genres: ["Historical Fiction", "Realistic Fiction"], themes: ["Family", "Justice", "Identity"], mood: "Emotional and heartfelt", setting: "Small town", pace: "mixed", pages: 262, difficulty: "medium" },
+  { title: "Bridge to Terabithia", author: "Katherine Paterson", isbn: "9780064401845", genres: ["Realistic Fiction", "Fantasy"], themes: ["Friendship", "Coming of age"], mood: "Emotional and heartfelt", setting: "Small town", pace: "mixed", pages: 128, difficulty: "easy" },
+  { title: "Charlotte's Web", author: "E.B. White", isbn: "9780064400558", genres: ["Fantasy", "Realistic Fiction"], themes: ["Friendship", "Nature", "Family"], mood: "Emotional and heartfelt", setting: "Small town", pace: "slow", pages: 192, difficulty: "easy" },
+  { title: "The Lion, the Witch and the Wardrobe", author: "C.S. Lewis", isbn: "9780064404990", genres: ["Fantasy", "Adventure"], themes: ["Magic & Supernatural", "War & Conflict", "Family"], mood: "Action-packed", setting: "Another world / fantasy realm", pace: "fast", pages: 208, difficulty: "easy" },
+  { title: "Matilda", author: "Roald Dahl", isbn: "9780142410370", genres: ["Humor", "Fantasy"], themes: ["Identity", "Justice", "Family"], mood: "Light and fun", setting: "School", pace: "fast", pages: 240, difficulty: "easy" },
+  { title: "Hoot", author: "Carl Hiaasen", isbn: "9780440419396", genres: ["Mystery", "Realistic Fiction"], themes: ["Nature", "Justice", "Friendship"], mood: "Light and fun", setting: "School", pace: "mixed", pages: 292, difficulty: "medium" },
+  { title: "The War That Saved My Life", author: "Kimberly Brubaker Bradley", isbn: "9780147510488", genres: ["Historical Fiction"], themes: ["War & Conflict", "Family", "Survival"], mood: "Emotional and heartfelt", setting: "Small town", pace: "mixed", pages: 316, difficulty: "medium" },
+  { title: "Out of My Mind", author: "Sharon M. Draper", isbn: "9781416971719", genres: ["Realistic Fiction"], themes: ["Identity", "Friendship", "Social Issues"], mood: "Emotional and heartfelt", setting: "School", pace: "mixed", pages: 295, difficulty: "medium" },
+  { title: "The One and Only Ivan", author: "Katherine Applegate", isbn: "9780061992278", genres: ["Realistic Fiction", "Fantasy"], themes: ["Friendship", "Nature", "Identity"], mood: "Emotional and heartfelt", setting: "Modern day", pace: "slow", pages: 300, difficulty: "easy" },
+  { title: "Refugee", author: "Alan Gratz", isbn: "9780545880831", genres: ["Historical Fiction", "Adventure"], themes: ["Survival", "War & Conflict", "Family"], mood: "Dark and intense", setting: "Modern day", pace: "fast", pages: 338, difficulty: "medium" },
+  { title: "Restart", author: "Gordon Korman", isbn: "9781338053777", genres: ["Realistic Fiction", "Mystery"], themes: ["Identity", "Friendship", "Coming of age"], mood: "Thought-provoking", setting: "School", pace: "fast", pages: 243, difficulty: "easy" },
+  { title: "A Long Walk to Water", author: "Linda Sue Park", isbn: "9780547577319", genres: ["Historical Fiction", "Adventure"], themes: ["Survival", "War & Conflict", "Social Issues"], mood: "Thought-provoking", setting: "Wilderness / nature", pace: "fast", pages: 128, difficulty: "easy" },
+  { title: "Long Way Down", author: "Jason Reynolds", isbn: "9781481438254", genres: ["Poetry", "Realistic Fiction"], themes: ["Justice", "Coming of age", "Social Issues"], mood: "Dark and intense", setting: "Big city", pace: "fast", pages: 306, difficulty: "medium" },
+  { title: "Ghost", author: "Jason Reynolds", isbn: "9781481450157", genres: ["Realistic Fiction"], themes: ["Identity", "Family", "Coming of age"], mood: "Emotional and heartfelt", setting: "Modern day", pace: "fast", pages: 195, difficulty: "easy" },
+  { title: "The Crossover", author: "Kwame Alexander", isbn: "9780544107717", genres: ["Poetry", "Realistic Fiction"], themes: ["Family", "Coming of age", "Identity"], mood: "Emotional and heartfelt", setting: "School", pace: "fast", pages: 237, difficulty: "easy" },
+  { title: "Counting by 7s", author: "Holly Goldberg Sloan", isbn: "9780142422854", genres: ["Realistic Fiction"], themes: ["Identity", "Friendship", "Family"], mood: "Thought-provoking", setting: "School", pace: "slow", pages: 378, difficulty: "medium" },
+  { title: "El Deafo", author: "Cece Bell", isbn: "9781419710209", genres: ["Graphic Novels", "Non-Fiction"], themes: ["Identity", "Friendship", "Social Issues"], mood: "Emotional and heartfelt", setting: "School", pace: "mixed", pages: 248, difficulty: "easy" },
+  { title: "The Girl Who Drank the Moon", author: "Kelly Barnhill", isbn: "9781616205676", genres: ["Fantasy", "Adventure"], themes: ["Magic & Supernatural", "Family", "Coming of age"], mood: "Dark and intense", setting: "Another world / fantasy realm", pace: "slow", pages: 388, difficulty: "medium" },
+  { title: "Wishtree", author: "Katherine Applegate", isbn: "9781250043221", genres: ["Fantasy", "Realistic Fiction"], themes: ["Nature", "Friendship", "Identity"], mood: "Thought-provoking", setting: "Small town", pace: "slow", pages: 224, difficulty: "easy" },
+  { title: "Brown Girl Dreaming", author: "Jacqueline Woodson", isbn: "9780147515827", genres: ["Poetry", "Non-Fiction"], themes: ["Identity", "Family", "Social Issues"], mood: "Thought-provoking", setting: "Small town", pace: "slow", pages: 337, difficulty: "medium" },
+  { title: "Inside Out and Back Again", author: "Thanhha Lai", isbn: "9780061962790", genres: ["Poetry", "Historical Fiction"], themes: ["Family", "Survival", "Identity"], mood: "Emotional and heartfelt", setting: "Modern day", pace: "slow", pages: 272, difficulty: "easy" },
+  { title: "Bud, Not Buddy", author: "Christopher Paul Curtis", isbn: "9780440413288", genres: ["Historical Fiction", "Mystery"], themes: ["Family", "Identity", "Justice"], mood: "Light and fun", setting: "Small town", pace: "mixed", pages: 245, difficulty: "easy" },
+  { title: "Walk Two Moons", author: "Sharon Creech", isbn: "9780064405171", genres: ["Realistic Fiction", "Mystery"], themes: ["Family", "Friendship", "Coming of age"], mood: "Emotional and heartfelt", setting: "Small town", pace: "slow", pages: 280, difficulty: "medium" },
+  { title: "The Westing Game", author: "Ellen Raskin", isbn: "9780142401200", genres: ["Mystery"], themes: ["Justice", "Identity"], mood: "Thought-provoking", setting: "Big city", pace: "fast", pages: 216, difficulty: "medium" },
+  { title: "Frindle", author: "Andrew Clements", isbn: "9780689818769", genres: ["Humor", "Realistic Fiction"], themes: ["Identity", "Friendship"], mood: "Light and fun", setting: "School", pace: "fast", pages: 105, difficulty: "easy" },
+  { title: "The Phantom Tollbooth", author: "Norton Juster", isbn: "9780394820378", genres: ["Fantasy", "Adventure"], themes: ["Magic & Supernatural", "Coming of age"], mood: "Light and fun", setting: "Another world / fantasy realm", pace: "fast", pages: 256, difficulty: "medium" },
+  { title: "Charlie and the Chocolate Factory", author: "Roald Dahl", isbn: "9780142410318", genres: ["Fantasy", "Humor"], themes: ["Family", "Identity"], mood: "Light and fun", setting: "Another world / fantasy realm", pace: "fast", pages: 192, difficulty: "easy" },
+  { title: "Ella Enchanted", author: "Gail Carson Levine", isbn: "9780064407052", genres: ["Fantasy", "Romance"], themes: ["Magic & Supernatural", "Identity"], mood: "Light and fun", setting: "Medieval / old times", pace: "mixed", pages: 232, difficulty: "easy" },
+  { title: "The Maze Runner", author: "James Dashner", isbn: "9780385737951", genres: ["Sci-Fi", "Adventure"], themes: ["Survival", "Technology", "Friendship"], mood: "Action-packed", setting: "Futuristic / space", pace: "fast", pages: 374, difficulty: "medium" },
+  { title: "Shiloh", author: "Phyllis Reynolds Naylor", isbn: "9780689835827", genres: ["Realistic Fiction"], themes: ["Friendship", "Family", "Nature"], mood: "Emotional and heartfelt", setting: "Small town", pace: "slow", pages: 144, difficulty: "easy" },
+  { title: "Al Capone Does My Shirts", author: "Gennifer Choldenko", isbn: "9780142404195", genres: ["Historical Fiction", "Realistic Fiction"], themes: ["Family", "Friendship", "Identity"], mood: "Light and fun", setting: "School", pace: "mixed", pages: 228, difficulty: "easy" },
+  { title: "Becoming Naomi León", author: "Pam Muñoz Ryan", isbn: "9780439269971", genres: ["Realistic Fiction"], themes: ["Family", "Identity", "Coming of age"], mood: "Emotional and heartfelt", setting: "Small town", pace: "slow", pages: 246, difficulty: "easy" },
+].map((b, i) => ({ id: "sugg-" + (i + 1), ...b, inLibrary: false, suggested: true, approved: true }));
+
+/* How much a book suits a student's questionnaire answers. Used for both the
+ * class-library list and the "we don't have it" list so the two are ranked the
+ * same way. */
+function scoreBook(book, prefs) {
+  const likedGenres = prefs.genres || [];
+  const themes = prefs.themes || [];
+  const mood = prefs.mood || "";
+  const bookLength = prefs.book_length || "";
+  const readingLevel = prefs.reading_level || "";
+  const settingPref = prefs.setting_pref || [];
+  const pacePref = prefs.pace_pref || "";
+  const avoidPref = prefs.avoid_pref || [];
+
+  let score = 0;
+  const bookGenres = (book.genres || []).map((g) => g.toLowerCase());
+  const bookThemes = (book.themes || []).map((t) => t.toLowerCase());
+  const bookSetting = (book.setting || "").toLowerCase();
+
+  // Genre match (highest weight)
+  likedGenres.forEach((g) => {
+    if (bookGenres.includes(g.toLowerCase())) score += 10;
+  });
+
+  // Theme match
+  themes.forEach((t) => {
+    if (bookThemes.includes(t.toLowerCase())) score += 5;
+  });
+
+  // Mood match
+  if (mood && book.mood && mood !== "No preference") {
+    if (book.mood.toLowerCase() === mood.toLowerCase()) score += 4;
+  }
+
+  // Book length preference
+  if (bookLength && bookLength !== "No preference" && book.pages) {
+    if (bookLength.includes("Short") && book.pages < 150) score += 3;
+    else if (bookLength.includes("Medium") && book.pages >= 150 && book.pages <= 300) score += 3;
+    else if (bookLength.includes("Long") && book.pages > 300) score += 3;
+  }
+
+  // Reading level match
+  if (readingLevel && book.difficulty) {
+    if (readingLevel === "Easy reads" && book.difficulty === "easy") score += 3;
+    if (readingLevel === "Just right" && book.difficulty === "medium") score += 3;
+    if (readingLevel === "Challenging me" && book.difficulty === "hard") score += 3;
+  }
+
+  // Setting preference match
+  if (settingPref.length && bookSetting) {
+    settingPref.forEach((s) => {
+      if (bookSetting.includes(s.toLowerCase())) score += 3;
+    });
+  }
+
+  // Pace preference
+  if (pacePref && pacePref !== "No preference" && book.pace) {
+    if (pacePref.includes("Fast") && book.pace === "fast") score += 3;
+    if (pacePref.includes("Slow") && book.pace === "slow") score += 3;
+    if (pacePref.includes("Mix") && book.pace === "mixed") score += 3;
+  }
+
+  // Avoid penalty (reduce score if book matches something student wants to avoid)
+  if (avoidPref.length && !avoidPref.includes("Nothing — I'm open to anything")) {
+    avoidPref.forEach((a) => {
+      if (a.includes("romance") && bookThemes.includes("romance")) score -= 8;
+      if (a.includes("scary") && bookGenres.includes("horror")) score -= 8;
+      if (a.includes("sad") && book.mood && book.mood.toLowerCase().includes("emotional")) score -= 5;
+      if (a.includes("complicated") && book.difficulty === "hard") score -= 4;
+    });
+  }
+
+  // Teacher-picked bonus
+  if (book.teacherPick) score += 2;
+
+  return score;
+}
+
+/* Best matches first; books nothing in the answers points at are dropped. */
+function rankBooks(books, prefs) {
+  return books
+    .map((book) => ({ ...book, score: scoreBook(book, prefs) }))
+    .filter((b) => b.score > 0)
+    .sort((a, b) => b.score - a.score);
+}
+
+/* The highest score a book could reach given this student's answers, so a
+ * match percentage means something (the old fixed "score / 30" pinned nearly
+ * everything at 100%). Mirrors the weights in scoreBook(). */
+function maxPossibleScore(prefs) {
+  let max = 0;
+  max += (prefs.genres || []).length * 10;
+  max += (prefs.themes || []).length * 5;
+  if (prefs.mood && prefs.mood !== "No preference") max += 4;
+  if (prefs.book_length && prefs.book_length !== "No preference") max += 3;
+  if (prefs.reading_level) max += 3;
+  max += (prefs.setting_pref || []).length * 3;
+  if (prefs.pace_pref && prefs.pace_pref !== "No preference") max += 3;
+  max += 2; // teacher pick
+  return max;
+}
+
+/* "The Hobbit" and "hobbit, the" are the same book. Used to keep the
+ * "we don't have it" list from suggesting something that is on the shelf. */
+function titleKey(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\b(the|a|an)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function isbnKey(s) {
+  return String(s || "").replace(/\D/g, "");
+}
+
 function computeRecommendations(userId) {
   const user = state.users.find((u) => u.id === userId);
   const answers = (state.responses || []).filter((q) => q.userId === userId);
-  if (!answers.length || !user) return [];
+  const empty = { library: [], general: [], recommendations: [], books: state.books, counts: { library: 0, general: 0 }, limits: { library: 5, general: 5 } };
+  if (!answers.length || !user) return empty;
 
   // Gather all answer data
   const prefs = {};
@@ -449,93 +617,69 @@ function computeRecommendations(userId) {
     prefs[a.questionId] = a.answer;
   });
 
-  const likedGenres = prefs.genres || [];
-  const themes = prefs.themes || [];
-  const mood = prefs.mood || "";
-  const bookLength = prefs.book_length || "";
-  const readingLevel = prefs.reading_level || "";
-  const settingPref = prefs.setting_pref || [];
-  const characterPref = prefs.character_pref || "";
-  const pacePref = prefs.pace_pref || "";
-  const seriesPref = prefs.series_pref || "";
-  const avoidPref = prefs.avoid_pref || [];
+  /* 0 is a real choice ("don't show this list"); a missing setting is not. */
+  const recLimit = (value, fallback) => {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const libraryLimit = recLimit(state.settings.libraryRecsPerStudent, 5);
+  const generalLimit = recLimit(state.settings.generalRecsPerStudent, 5);
 
-  // Score each book
-  const scored = state.books
-    .filter((b) => b.approved !== false) // only teacher-approved books
-    .map((book) => {
-      let score = 0;
-      const bookGenres = (book.genres || []).map((g) => g.toLowerCase());
-      const bookThemes = (book.themes || []).map((t) => t.toLowerCase());
-      const bookSetting = (book.setting || "").toLowerCase();
+  // ---- 1. Books on our shelves ----
+  const library = rankBooks(
+    state.books.filter((b) => b.approved !== false && b.inLibrary !== false),
+    prefs
+  ).slice(0, libraryLimit);
 
-      // Genre match (highest weight)
-      likedGenres.forEach((g) => {
-        if (bookGenres.includes(g.toLowerCase())) score += 10;
-      });
+  // ---- 2. Books we don't have, to find elsewhere ----
+  // Teacher-added "we don't own this" books come first, then the built-in pool.
+  const ownedTitles = new Set();
+  const ownedIsbns = new Set();
+  state.books.forEach((b) => {
+    if (b.inLibrary === false) return; // not ours, so it can be suggested
+    if (b.title) ownedTitles.add(titleKey(b.title));
+    if (b.isbn) ownedIsbns.add(isbnKey(b.isbn));
+  });
 
-      // Theme match
-      themes.forEach((t) => {
-        if (bookThemes.includes(t.toLowerCase())) score += 5;
-      });
+  const candidates = [
+    ...state.books.filter((b) => b.approved !== false && b.inLibrary === false),
+    ...GENERAL_BOOK_POOL,
+  ];
+  const seen = new Set();
+  const general = rankBooks(candidates, prefs).filter((b) => {
+    const tk = titleKey(b.title);
+    const isbn = isbnKey(b.isbn);
+    if (!tk) return false;
+    if (ownedTitles.has(tk)) return false;                       // it's on our shelf
+    if (isbn && ownedIsbns.has(isbn)) return false;              // same book, other printing
+    if (seen.has(tk)) return false;                              // no duplicates in the list
+    seen.add(tk);
+    return true;
+  }).slice(0, generalLimit);
 
-      // Mood match
-      if (mood && book.mood && mood !== "No preference") {
-        if (book.mood.toLowerCase() === mood.toLowerCase()) score += 4;
-      }
-
-      // Book length preference
-      if (bookLength && bookLength !== "No preference" && book.pages) {
-        if (bookLength.includes("Short") && book.pages < 150) score += 3;
-        else if (bookLength.includes("Medium") && book.pages >= 150 && book.pages <= 300) score += 3;
-        else if (bookLength.includes("Long") && book.pages > 300) score += 3;
-      }
-
-      // Reading level match
-      if (readingLevel && book.difficulty) {
-        if (readingLevel === "Easy reads" && book.difficulty === "easy") score += 3;
-        if (readingLevel === "Just right" && book.difficulty === "medium") score += 3;
-        if (readingLevel === "Challenging me" && book.difficulty === "hard") score += 3;
-      }
-
-      // Setting preference match
-      if (settingPref.length && bookSetting) {
-        settingPref.forEach((s) => {
-          if (bookSetting.includes(s.toLowerCase())) score += 3;
-        });
-      }
-
-      // Pace preference
-      if (pacePref && pacePref !== "No preference" && book.pace) {
-        if (pacePref.includes("Fast") && book.pace === "fast") score += 3;
-        if (pacePref.includes("Slow") && book.pace === "slow") score += 3;
-        if (pacePref.includes("Mix") && book.pace === "mixed") score += 3;
-      }
-
-      // Avoid penalty (reduce score if book matches something student wants to avoid)
-      if (avoidPref.length && !avoidPref.includes("Nothing — I'm open to anything")) {
-        avoidPref.forEach((a) => {
-          if (a.includes("romance") && bookThemes.includes("romance")) score -= 8;
-          if (a.includes("scary") && bookGenres.includes("horror")) score -= 8;
-          if (a.includes("sad") && book.mood && book.mood.toLowerCase().includes("emotional")) score -= 5;
-          if (a.includes("complicated") && book.difficulty === "hard") score -= 4;
-        });
-      }
-
-      // Teacher-picked bonus
-      if (book.teacherPick) score += 2;
-
-      return { ...book, score };
-    })
-    .filter((b) => b.score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  const maxRecs = state.settings.maxRecsPerStudent || 10;
-  return scored.slice(0, maxRecs).map((b) => ({
+  const maxScore = maxPossibleScore(prefs) || 1;
+  const toRec = (b, inLibrary) => ({
+    ...b,
     bookId: b.id,
+    inLibrary,
     score: b.score,
+    // How well this book fits, as a share of what was possible to match.
+    match: Math.min(100, Math.max(5, Math.round((b.score / maxScore) * 100))),
     reason: buildReason(b, prefs),
-  }));
+  });
+
+  const libraryRecs = library.map((b) => toRec(b, true));
+  const generalRecs = general.map((b) => toRec(b, false));
+
+  return {
+    library: libraryRecs,
+    general: generalRecs,
+    // Kept for older callers: the whole list, shelves first.
+    recommendations: [...libraryRecs, ...generalRecs],
+    books: state.books,
+    counts: { library: libraryRecs.length, general: generalRecs.length },
+    limits: { library: libraryLimit, general: generalLimit },
+  };
 }
 
 function buildReason(book, prefs) {
@@ -683,8 +827,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === "/api/recommendations" && method === "GET") {
     const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
-    const recs = computeRecommendations(sess.userId);
-    return json(res, 200, { recommendations: recs, books: state.books });
+    // { library: [...], general: [...], counts, books } — two separate lists
+    return json(res, 200, computeRecommendations(sess.userId));
   }
 
   // GET /api/state
