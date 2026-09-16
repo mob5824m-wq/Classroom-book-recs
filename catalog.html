@@ -53,7 +53,9 @@
 
       try {
         const st = await App.getState();
-        allBooks = (st.books || []).filter(b => b.approved !== false);
+        // The catalog is what's on our shelves — "we don't have it" suggestions
+        // belong on the recommendations page, not here.
+        allBooks = (st.books || []).filter(b => b.approved !== false && b.inLibrary !== false);
         populateGenres();
         renderBooks();
       } catch (e) {}

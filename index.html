@@ -6,7 +6,7 @@
   <title>Book Recs — Classroom Book Recommendations</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
-<body data-active-page="index">
+<body data-active-page="home">
   <header class="top-bar"></header>
 
   <main class="container">
@@ -51,8 +51,10 @@
   <script src="/js/app.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", async () => {
+      // Draw the header, then let App.getMe() resolve the session and repaint it
+      // — a signed-in student must never be shown the "Sign In" nav on Home.
       App.renderNav("home");
-      const me = App.me || await App.getMe();
+      const me = await App.getMe();
       if (me) {
         const hero = document.getElementById("hero-actions");
         hero.innerHTML = me.role === "student"
@@ -64,9 +66,10 @@
       // Load stats & featured
       try {
         const st = await App.getState();
-        const books = st.books || [];
+        // Count the books we actually have on the shelves; "we don't have it"
+        // suggestions are not part of the class library.
+        const books = (st.books || []).filter(b => b.inLibrary !== false);
         const students = (st.users || []).filter(u => u.role === "student");
-        const recs = st.recommendations || [];
 
         document.getElementById("stats-row").innerHTML = `
           <div class="stat-card"><div class="stat-number">${books.length}</div><div class="stat-label">Books</div></div>
