@@ -5,6 +5,13 @@
 const App = (() => {
   let me = null;
   let state = null;
+  /* Auth bookkeeping.
+   * authResolved = we have asked the server who we are at least once, so
+   * "no user" is a real answer and not just "we don't know yet". The nav uses
+   * it to avoid drawing a signed-out header over a signed-in page.        */
+  let authResolved = false;
+  let mePromise = null;   // in-flight /api/me, shared between callers
+  let navPage = "";       // last page handed to renderNav, so we can repaint
 
   /* ---- toast ---- */
   function toast(msg, type = "info") {
@@ -96,20 +103,42 @@ const App = (() => {
   }
 
   async function getMe() {
-    try {
-      const headers = { "Content-Type": "application/json" };
-      const token = getToken();
-      if (token) headers["X-Session-Token"] = token;
-      const res = await fetch("/api/me", { headers, credentials: "same-origin" });
-      if (!res.ok) { me = null; return null; }
-      const data = await res.json();
-      if (data.token) storeToken(data.token);
-      me = data.user;
-      return me;
-    } catch (e) {
-      me = null;
-      return null;
-    }
+    // Share one request: pages call this from several places (auth guard,
+    // nav, hero) and each new page load asks again.
+    if (mePromise) return mePromise;
+    mePromise = (async () => {
+      try {
+        // One retry: a dropped request on a flaky classroom Wi-Fi is not a
+        // signed-out student, and getting this wrong signs them out visually.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const headers = { "Content-Type": "application/json" };
+            const token = getToken();
+            if (token) headers["X-Session-Token"] = token;
+            const res = await fetch("/api/me", { headers, credentials: "same-origin" });
+            if (res.status === 401) { me = null; return null; }
+            if (!res.ok) throw new Error("auth check failed: " + res.status);
+            const data = await res.json();
+            if (data.token) storeToken(data.token);
+            me = data.user;
+            return me;
+          } catch (e) {
+            if (attempt === 1) { me = null; return null; }
+            await new Promise((r) => setTimeout(r, 600));
+          }
+        }
+        me = null;
+        return null;
+      } finally {
+        authResolved = true;
+        mePromise = null;
+        // Repaint the header now that the real session is known. Without this
+        // a page that renders its nav early (e.g. Home) keeps showing
+        // "Sign In" to a student who is still signed in.
+        renderNav(navPage);
+      }
+    })();
+    return mePromise;
   }
 
   async function login(code, password, username) {
@@ -126,6 +155,7 @@ const App = (() => {
       throw new Error(data.error);
     }
     me = data.user;
+    authResolved = true;
     // Store session token for proxy environments where cookies get stripped
     if (data.token) {
       storeToken(data.token);
@@ -133,13 +163,18 @@ const App = (() => {
     } else {
       console.warn("[BookRecs] No token in login response");
     }
+    renderNav(navPage);
     return me;
   }
 
   async function logout() {
-    await api("/api/logout", { method: "POST" });
+    try {
+      await api("/api/logout", { method: "POST" });
+    } catch (e) { /* sign out locally even if the server call fails */ }
     clearToken();
     me = null;
+    authResolved = true;
+    renderNav(navPage);
     window.location.href = "/";
   }
 
@@ -147,29 +182,35 @@ const App = (() => {
   function renderNav(activePage) {
     const bar = document.querySelector(".top-bar");
     if (!bar) return;
+    if (typeof activePage === "string" && activePage) navPage = activePage;
 
     const isStudent = me && me.role === "student";
     const isAdmin = me && me.role === "admin";
 
-    let links = '<a href="/" class="' + (activePage === "home" ? "active" : "") + '">Home</a>';
+    let links = '<a href="/" class="' + (navPage === "home" ? "active" : "") + '">Home</a>';
     if (me) {
-      links += '<a href="/catalog.html" class="' + (activePage === "catalog" ? "active" : "") + '">Catalog</a>';
+      links += '<a href="/catalog.html" class="' + (navPage === "catalog" ? "active" : "") + '">Catalog</a>';
       if (isStudent) {
-        links += '<a href="/questionnaire.html" class="' + (activePage === "questionnaire" ? "active" : "") + '">My Tastes</a>';
-        links += '<a href="/recommendations.html" class="' + (activePage === "recommendations" ? "active" : "") + '">For Me</a>';
+        links += '<a href="/questionnaire.html" class="' + (navPage === "questionnaire" ? "active" : "") + '">My Tastes</a>';
+        links += '<a href="/recommendations.html" class="' + (navPage === "recommendations" ? "active" : "") + '">For Me</a>';
       }
       if (isAdmin) {
-        links += '<a href="/admin.html" class="' + (activePage === "admin" ? "active" : "") + '">Teacher</a>';
+        links += '<a href="/admin.html" class="' + (navPage === "admin" ? "active" : "") + '">Teacher</a>';
       }
     }
 
     const name = me ? (me.displayName || me.username || me.code) : "";
     const role = me ? me.role : "";
-    const userHtml = me
-      ? `<span class="user-badge">${role}</span>
+    let userHtml = "";
+    if (me) {
+      userHtml = `<span class="user-badge">${role}</span>
          <span>${name}</span>
-         <button class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,.5)" onclick="App.logout()">Sign Out</button>`
-      : `<a href="/login.html" class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,.5)">Sign In</a>`;
+         <button class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,.5)" onclick="App.logout()">Sign Out</button>`;
+    } else if (authResolved) {
+      userHtml = `<a href="/login.html" class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,.5)">Sign In</a>`;
+    }
+    // If we don't know yet, leave the user area empty for a moment instead of
+    // claiming the visitor is signed out — see the "Sign In" flash on Home.
 
     bar.innerHTML = `
       <div class="logo"><span>📚</span> Book Recs</div>
@@ -177,6 +218,9 @@ const App = (() => {
       <nav>${links}</nav>
       <div class="user-info">${userHtml}</div>
     `;
+
+    // First paint on any page: find out whether there is a session, then repaint.
+    if (!authResolved && !mePromise) getMe();
   }
 
   /* ---- clipboard ----
@@ -213,14 +257,10 @@ const App = (() => {
 
   /* ---- auth guard ---- */
   async function requireAuth(allowedRoles) {
-    let user = await getMe();
+    // getMe() already retries a transient failure itself.
+    const user = await getMe();
     if (!user) {
-      console.log("[BookRecs] First auth check failed, retrying in 500ms...");
-      await new Promise(r => setTimeout(r, 500));
-      user = await getMe();
-    }
-    if (!user) {
-      console.warn("[BookRecs] Auth failed after retry, redirecting to login");
+      console.warn("[BookRecs] Auth failed, redirecting to login");
       window.location.href = "/login.html";
       return null;
     }

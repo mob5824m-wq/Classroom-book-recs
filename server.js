@@ -281,43 +281,69 @@ function makeSession(userId) {
   return token;
 }
 
-function getSession(req) {
-  // Try multiple sources for the session token:
-  // 1. HttpOnly cookie (primary)
-  // 2. Regular readable cookie (proxy fallback)
-  // 3. X-Session-Token header (JavaScript localStorage fallback)
+/* Session cookies: an HttpOnly one (normal) plus a readable one (proxy
+ * fallback — see the comment above getSession). */
+function sessionCookieHeaders(token) {
+  return [
+    `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`,
+    `${COOKIE}_token=${token}; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL / 1000}`,
+  ];
+}
+
+/* Every token this request carries, in order of trust:
+ * 1. HttpOnly cookie (primary)
+ * 2. Regular readable cookie (proxy fallback)
+ * 3. X-Session-Token header (JavaScript localStorage fallback)
+ * All of them are collected: a dead token in one spot must not hide a live
+ * token in another (proxies drop or rewrite cookies, and the page keeps its
+ * own copy), which otherwise looks exactly like being signed out. */
+function sessionTokens(req) {
   const cookies = req.headers.cookie || "";
-  const httpOnlyMatch = cookies.match(new RegExp(`${COOKIE}=([a-f0-9]+)`));
-  const regularMatch = cookies.match(new RegExp(`${COOKIE}_token=([a-f0-9]+)`));
-  const headerToken = req.headers["x-session-token"];
-  const token = (httpOnlyMatch && httpOnlyMatch[1]) || (regularMatch && regularMatch[1]) || headerToken;
-  if (!token) return null;
-  const sess = sessions.get(token);
-  if (!sess) return null;
+  const fromCookie = (cookies.match(new RegExp(`${COOKIE}=([a-f0-9]+)`)) || [])[1];
+  const fromReadable = (cookies.match(new RegExp(`${COOKIE}_token=([a-f0-9]+)`)) || [])[1];
+  const fromHeader = String(req.headers["x-session-token"] || "").trim();
+  const seen = new Set();
+  return [
+    { token: fromCookie, source: "cookie" },
+    { token: fromReadable, source: "readable-cookie" },
+    { token: fromHeader, source: "header" },
+  ].filter((c) => {
+    if (!c.token || !/^[a-f0-9]+$/.test(c.token) || seen.has(c.token)) return false;
+    seen.add(c.token);
+    return true;
+  });
+}
+
+function getSession(req, res) {
+  const candidates = sessionTokens(req);
+  if (!candidates.length) return null;
   const now = Date.now();
-  if (now - sess.lastActive > SESSION_TTL) {
-    sessions.delete(token);
+  for (const cand of candidates) {
+    const sess = sessions.get(cand.token);
+    if (!sess) continue;
+    if (now - sess.lastActive > SESSION_TTL || now - sess.created > SESSION_ABS_MAX) {
+      sessions.delete(cand.token);
+      persistSessions();
+      continue;
+    }
+    sess.lastActive = now;
     persistSessions();
-    return null;
+    // Session came from a fallback source, so the browser is still holding a
+    // stale cookie. Re-issue both cookies with the token that actually works.
+    if (res && cand.source !== "cookie" && !res.headersSent) {
+      res.setHeader("Set-Cookie", sessionCookieHeaders(cand.token));
+    }
+    return { token: cand.token, ...sess };
   }
-  if (now - sess.created > SESSION_ABS_MAX) {
-    sessions.delete(token);
-    persistSessions();
-    return null;
-  }
-  sess.lastActive = now;
-  persistSessions();
-  return { token, ...sess };
+  return null;
 }
 
 function clearSession(req) {
-  const cookie = (req.headers.cookie || "").match(
-    new RegExp(COOKIE + "=([a-f0-9]+)")
-  );
-  if (cookie) {
-    sessions.delete(cookie[1]);
-    persistSessions();
-  }
+  let cleared = false;
+  sessionTokens(req).forEach((cand) => {
+    if (sessions.delete(cand.token)) cleared = true;
+  });
+  if (cleared) persistSessions();
 }
 
 /* ----------------------------- helpers --------------------------------- */
@@ -543,7 +569,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/me
   if (pathname === "/api/me" && method === "GET") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) {
       console.log("[/api/me] No session. Cookies:", req.headers.cookie || "(none)", "X-Session-Token:", req.headers["x-session-token"] || "(none)");
       return json(res, 401, { error: "Not signed in" });
@@ -578,10 +604,7 @@ const server = http.createServer(async (req, res) => {
     const token = makeSession(user.id);
     console.log("[/api/login] Success:", user.username, "token:", token.slice(0, 12) + "...");
     // Set both an HttpOnly cookie (normal) and a readable cookie (for proxy fallback)
-    res.setHeader("Set-Cookie", [
-      `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`,
-      `${COOKIE}_token=${token}; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL / 1000}`,
-    ]);
+    res.setHeader("Set-Cookie", sessionCookieHeaders(token));
     return json(res, 200, { user: redact(user), token });
   }
 
@@ -597,7 +620,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/change-password
   if (pathname === "/api/change-password" && method === "POST") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const body = await bodyJSON(req);
     const user = state.users.find((u) => u.id === sess.userId);
@@ -619,7 +642,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/questionnaire
   if (pathname === "/api/questionnaire" && method === "POST") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const body = await bodyJSON(req);
     if (!body.answers || !Array.isArray(body.answers))
@@ -645,7 +668,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/questionnaire
   if (pathname === "/api/questionnaire" && method === "GET") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const questions = getQuestionnaireForStudent(sess.userId);
     const answers = (state.responses || []).filter(
@@ -658,7 +681,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/recommendations
   if (pathname === "/api/recommendations" && method === "GET") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const recs = computeRecommendations(sess.userId);
     return json(res, 200, { recommendations: recs, books: state.books });
@@ -666,7 +689,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/state
   if (pathname === "/api/state" && method === "GET") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     const safeState = JSON.parse(JSON.stringify(state));
     // Redact all user passwords
     safeState.users = safeState.users.map(redact);
@@ -766,7 +789,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/settings (admin only)
   if (pathname === "/api/settings" && method === "GET") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const user = state.users.find((u) => u.id === sess.userId);
     if (!user || user.role !== "admin")
@@ -776,7 +799,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/network (admin only) — how devices reach this server
   if (pathname === "/api/network" && method === "GET") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const user = state.users.find((u) => u.id === sess.userId);
     if (!user || user.role !== "admin") return json(res, 403, { error: "Admin only" });
@@ -801,7 +824,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/state
   if (pathname === "/api/state" && method === "POST") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const incoming = await bodyJSON(req);
     const safe = sanitizeNonAdminSave(sess, incoming);
@@ -838,7 +861,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/reset
   if (pathname === "/api/reset" && method === "POST") {
-    const sess = getSession(req);
+    const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
     const user = state.users.find((u) => u.id === sess.userId);
     if (!user || user.role !== "admin")
