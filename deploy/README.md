@@ -16,6 +16,7 @@ You do not need any of it to run the site locally.
 | `lan-check.js` | Auto-detects the LAN address your class should use (via the OS default route) and diagnoses "other devices can't open the LAN IP": listening port, bind address, real LAN IPs, app answers on the LAN IP or only localhost, firewall state, plus the exact command to open the port. `--print-url` outputs just the URL; `--serve-test` publishes a test page. No dependencies. | All |
 | `lan-check.bat` / `lan-check.sh` | Thin wrappers so you can double-click / `./` the check. | Windows / macOS-Linux |
 | `../Caddyfile.example` | The only config Caddy needs — free HTTPS, routes to the app on port 8080. | All |
+| `../Caddyfile.dual.example` + `dual-host-pi.md` | **Two apps, one Pi:** one shared Caddy serving Book Recs (`:8080`) and Classroom Library (`:8081`) on two DuckDNS hostnames. The `.md` is the full guide. | Linux / Raspberry Pi |
 
 ## The 30-second mental model
 
@@ -46,6 +47,16 @@ Students at school
    above). Confirm it prints `Listening on 0.0.0.0:8080`.
 6. **Test** — on your phone's mobile data (not home Wi-Fi) open
    `https://mybookrecs.duckdns.org`.
+
+## Two apps on one Pi (Book Recs + Classroom Library)
+
+One Pi, two DuckDNS hostnames, one shared Caddy: Book Recs on `:8080`,
+Classroom Library on `:8081`, one DuckDNS updater run with both hostnames.
+Everything — port contract, shared Caddyfile, systemd units, router/firewall,
+troubleshooting — is in **[dual-host-pi.md](dual-host-pi.md)**, with the
+ready-to-use config in [`../Caddyfile.dual.example`](../Caddyfile.dual.example).
+This repo defines the contract; classroomlib adapts to it (its checklist is at
+the bottom of that guide).
 
 ## LAN-only hosting (no tunnel, no DDNS)
 

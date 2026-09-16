@@ -2,7 +2,7 @@
 # alive across reboots/crashes (Linux / Raspberry Pi).
 #
 # SETUP
-#   1. Edit the three paths below to match where you cloned the repo and your
+#   1. Edit the paths below to match where you cloned the repo and your
 #      username:  WorkingDirectory, ExecStart (node path), User.
 #   2. Install & enable:
 #        sudo cp book-recs.service /etc/systemd/system/
@@ -11,6 +11,12 @@
 #   3. Check it's running / see logs:
 #        systemctl status book-recs
 #        journalctl -u book-recs -f
+#
+# PORT (matters when co-hosting with Classroom Library on one Pi — see
+# dual-host-pi.md): BOOKRECS_PORT=8080 below pins this app to port 8080. The
+# pin wins over the saved admin port setting (precedence: --port flag >
+# PORT/BOOKRECS_PORT env > saved setting > 8080), so a port change in the
+# admin UI can never silently collide with Classroom Library on 8081.
 
 [Unit]
 Description=Classroom Book Recs server
@@ -23,6 +29,7 @@ Restart=always
 RestartSec=3
 User=pi
 Environment=NODE_ENV=production
+Environment=BOOKRECS_PORT=8080
 
 [Install]
 WantedBy=multi-user.target
