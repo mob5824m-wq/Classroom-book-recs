@@ -564,6 +564,25 @@ body.dark {
   font-size: .9rem;
 }
 
+/* "Just grabbed this one" marker for live Open Library picks */
+.rec-card .new-badge {
+  position: absolute;
+  top: 2.1rem;
+  right: .5rem;
+  background: rgba(46, 196, 182, .92);
+  color: #08343a;
+  padding: .15rem .5rem;
+  border-radius: 20px;
+  font-size: .68rem;
+  font-weight: 700;
+  z-index: 2;
+}
+
+.rec-section .live-note {
+  color: var(--success);
+  font-style: italic;
+}
+
 /* Where to find this book: in our library, or somewhere else */
 .rec-card .where-badge {
   position: absolute;

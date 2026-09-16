@@ -42,9 +42,15 @@
       <section class="rec-section" id="general-section">
         <div class="rec-section-head">
           <h2>🌎 Books We Don't Have (Yet)</h2>
-          <span class="rec-count" id="general-count"></span>
+          <span class="flex items-center gap-1">
+            <span class="rec-count" id="general-count"></span>
+            <button class="btn btn-sm btn-outline" id="refresh-ideas" onclick="refreshIdeas()" title="Ask Open Library for a different set of books">🔄 New ideas</button>
+          </span>
         </div>
-        <p class="text-muted rec-section-note">Not in our class library — great picks to look for at the public library or a bookstore.</p>
+        <p class="text-muted rec-section-note">
+          Not in our class library — great picks to look for at the public library or a bookstore.
+          <span id="general-source"></span>
+        </p>
         <div class="book-grid" id="general-grid"></div>
         <div id="general-empty" class="empty-state" style="display:none">
           <div class="icon">🌎</div>
@@ -120,10 +126,45 @@
         document.getElementById("subtitle").textContent = library.length && general.length
           ? `${library.length} from our class library, ${general.length} more to find elsewhere`
           : "Books matched to your preferences";
+
+        showGeneralSource(rdata.generalSource);
       } catch (e) {
         App.toast("Could not load recommendations", "error");
       }
     });
+
+    /* Say where the second list came from, so "Open Library is offline" is never
+     * mistaken for "there are no other books in the world". */
+    function showGeneralSource(info) {
+      const el = document.getElementById("general-source");
+      if (!el || !info) return;
+      el.innerHTML = info.live
+        ? `<br><span class="live-note">🌐 Live picks from <a href="https://openlibrary.org" target="_blank" rel="noopener">Open Library</a>, matched to your answers — press “New ideas” for more.</span>`
+        : `<br><span>${info.note || ""}</span>`;
+    }
+
+    /* Ask the server to grab a different set, skipping the ones already shown. */
+    async function refreshIdeas() {
+      const btn = document.getElementById("refresh-ideas");
+      const shown = [...document.querySelectorAll("#general-grid .book-title")].map(el => el.textContent.trim());
+      btn.disabled = true;
+      btn.textContent = "Finding books…";
+      try {
+        const rdata = await App.api(`/api/recommendations?refresh=1&exclude=${encodeURIComponent(shown.join(","))}`);
+        fillSection({
+          recs: rdata.general || [],
+          gridId: "general-grid",
+          emptyId: "general-empty",
+          countId: "general-count",
+        });
+        showGeneralSource(rdata.generalSource);
+        App.toast("Here are some different books", "success");
+      } catch (e) {
+        App.toast("Could not reach the book list — try again", "error");
+      }
+      btn.disabled = false;
+      btn.textContent = "🔄 New ideas";
+    }
 
     function fillSection({ recs, gridId, emptyId, countId }) {
       const grid = document.getElementById(gridId);
@@ -146,6 +187,7 @@
         ? `<img src="${coverSrc}" alt="${rec.title}" onerror="this.parentElement.innerHTML='<div class=no-cover><span>📖</span>${(rec.title||'Unknown').replace(/'/g,'')}'">`
         : `<div class="no-cover"><span>📖</span>${rec.title || 'Unknown'}</div>`;
       const pickBadge = rec.teacherPick ? '<div class="teacher-pick-badge">⭐ Teacher Pick</div>' : '';
+      const newBadge = rec.source === "openlibrary" ? '<div class="new-badge">🌐 New idea</div>' : '';
       const whereBadge = rec.inLibrary
         ? '<div class="where-badge in-library">📚 In our library</div>'
         : '<div class="where-badge not-in-library">🌎 Not in our library</div>';
@@ -156,7 +198,7 @@
         : Math.min(100, Math.round((rec.score / 30) * 100));
       return `
         <div class="book-card rec-card" onclick='openModal(${JSON.stringify(rec).replace(/'/g, "&#39;")})' style="cursor:pointer">
-          <div class="cover">${coverHtml}${pickBadge}${whereBadge}<div class="match-score">${scorePercent}% match</div></div>
+          <div class="cover">${coverHtml}${pickBadge}${newBadge}${whereBadge}<div class="match-score">${scorePercent}% match</div></div>
           <div class="book-info">
             <div class="book-title">${rec.title || 'Unknown'}</div>
             <div class="book-author">${rec.author || ''}</div>
@@ -171,11 +213,16 @@
       const coverHtml = coverSrc
         ? `<img src="${coverSrc}" alt="${book.title}" style="max-height:250px;border-radius:8px;margin-bottom:1rem" onerror="this.style.display='none'">`
         : '';
+      const notOwnedNote = book.source === "openlibrary"
+        ? `🌐 <strong>From <a href="https://openlibrary.org" target="_blank" rel="noopener">Open Library</a></strong> — ${book.availabilityLabel || "look for it at your public library"}.`
+        : `🌎 <strong>We don't have this one yet</strong> — look for it at your public library or a bookstore, or ask your teacher to add it to the class library.`;
       const availability = book.inLibrary
         ? `<p style="background:rgba(67,97,238,.08);border-radius:8px;padding:.6rem .8rem;margin-bottom:1rem">📚 <strong>In our class library</strong> — ask your teacher to borrow it.</p>`
-        : `<p style="background:rgba(255,159,28,.12);border-radius:8px;padding:.6rem .8rem;margin-bottom:1rem">🌎 <strong>We don't have this one yet</strong> — look for it at your public library or a bookstore, or ask your teacher to add it to the class library.</p>`;
+        : `<p style="background:rgba(255,159,28,.12);border-radius:8px;padding:.6rem .8rem;margin-bottom:1rem">${notOwnedNote}</p>`;
+      // Prefer the book's own Open Library page when we have it (it can be read
+      // or borrowed right there); otherwise fall back to a search.
       const findLink = !book.inLibrary
-        ? `<p style="margin-bottom:1rem"><a href="https://openlibrary.org/search?q=${encodeURIComponent(`${book.title} ${book.author || ""}`)}" target="_blank" rel="noopener">Find this book online →</a></p>`
+        ? `<p style="margin-bottom:1rem"><a href="${book.openLibraryUrl || `https://openlibrary.org/search?q=${encodeURIComponent(`${book.title} ${book.author || ""}`)}`}" target="_blank" rel="noopener">${book.openLibraryUrl ? "Open this book on Open Library →" : "Find this book online →"}</a></p>`
         : '';
       document.getElementById("modal-content").innerHTML = `
         ${coverHtml}
@@ -190,6 +237,7 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.9rem;color:var(--text-muted)">
           ${book.pages ? `<div>📄 ${book.pages} pages</div>` : ''}
           ${book.difficulty ? `<div>📊 ${book.difficulty}</div>` : ''}
+          ${book.firstPublished ? `<div>📅 First published ${book.firstPublished}</div>` : ''}
           ${book.teacherPick ? `<div>⭐ Teacher Pick</div>` : ''}
         </div>
         ${findLink}

@@ -95,12 +95,28 @@ const sessions = new Map();
 const SESSIONS_FILE = path.join(ROOT, "bookrecs-sessions.json");
 let sessionsSavePending = false;
 
+/* Sessions are saved to disk so they survive a restart — otherwise every
+ * restart would sign the whole class out, and a student who was working on the
+ * questionnaire when the server was updated would be dropped to the login page.
+ * Expired sessions are dropped on the way in so the file can't grow forever. */
 function loadSessions() {
   try {
     const raw = fs.readFileSync(SESSIONS_FILE, "utf8");
     const obj = JSON.parse(raw);
-    Object.keys(obj).forEach((token) => sessions.set(token, obj[token]));
-  } catch (e) { /* no file yet */ }
+    const now = Date.now();
+    let dropped = 0;
+    Object.keys(obj).forEach((token) => {
+      const sess = obj[token];
+      const expired = !sess ||
+        now - sess.lastActive > SESSION_TTL ||
+        now - sess.created > SESSION_ABS_MAX;
+      if (expired) dropped++;
+      else sessions.set(token, sess);
+    });
+    if (dropped) persistSessions();
+    const kept = sessions.size;
+    if (kept) console.log(`  Restored ${kept} signed-in session${kept === 1 ? "" : "s"}${dropped ? ` (dropped ${dropped} expired)` : ""}`);
+  } catch (e) { /* no file yet, or unreadable */ }
 }
 
 function persistSessions() {
@@ -132,6 +148,10 @@ function defaultState() {
       // shelves, and books we don't own (to find at the public library).
       libraryRecsPerStudent: 5,
       generalRecsPerStudent: 5,
+      // Where the "we don't have it" picks come from: "openlibrary" grabs them
+      // live (needs internet), "pool" uses the built-in list. Either way the
+      // built-in list is the fallback when Open Library can't be reached.
+      generalSource: "openlibrary",
       maxRecsPerStudent: 10, // legacy total, kept so older data still loads
       defaultPassword: "read123",
     },
@@ -445,8 +465,12 @@ const DEFAULT_QUESTIONS = [
 /* Books we don't own, used to fill the "find it elsewhere" half of a student's
  * recommendations. They never appear in the catalog, only as suggestions, so a
  * classroom always has something to offer when the shelves are thin (or when
- * the machine has no internet). Teacher-added books marked "we don't have this"
- * come first — see computeRecommendations(). */
+ * the machine has no internet).
+ *
+ * This list is now the FALLBACK: by default the suggestions are grabbed live
+ * from Open Library, matched to the student's questionnaire answers (see the
+ * Open Library section below). Teacher-added books marked "we don't have this"
+ * still come first — see computeRecommendations(). */
 const GENERAL_BOOK_POOL = [
   { title: "Harry Potter and the Sorcerer's Stone", author: "J.K. Rowling", isbn: "9780590353427", genres: ["Fantasy", "Adventure"], themes: ["Magic & Supernatural", "Friendship", "Coming of age"], mood: "Action-packed", setting: "Another world / fantasy realm", pace: "mixed", pages: 309, difficulty: "medium" },
   { title: "The Hunger Games", author: "Suzanne Collins", isbn: "9780439023481", genres: ["Sci-Fi", "Adventure"], themes: ["Survival", "Justice", "Coming of age"], mood: "Dark and intense", setting: "Futuristic / space", pace: "fast", pages: 374, difficulty: "medium" },
@@ -489,6 +513,242 @@ const GENERAL_BOOK_POOL = [
   { title: "Al Capone Does My Shirts", author: "Gennifer Choldenko", isbn: "9780142404195", genres: ["Historical Fiction", "Realistic Fiction"], themes: ["Family", "Friendship", "Identity"], mood: "Light and fun", setting: "School", pace: "mixed", pages: 228, difficulty: "easy" },
   { title: "Becoming Naomi León", author: "Pam Muñoz Ryan", isbn: "9780439269971", genres: ["Realistic Fiction"], themes: ["Family", "Identity", "Coming of age"], mood: "Emotional and heartfelt", setting: "Small town", pace: "slow", pages: 246, difficulty: "easy" },
 ].map((b, i) => ({ id: "sugg-" + (i + 1), ...b, inLibrary: false, suggested: true, approved: true }));
+
+/* ------------------- Open Library (live suggestions) -------------------
+ * The "Books We Don't Have (Yet)" list is grabbed live from Open Library,
+ * queried with the words from the student's questionnaire (genres + themes) and
+ * then scored with the same scoreBook() used for our own shelves, so both lists
+ * are ranked the same way.
+ *
+ * Everything here is best-effort: a slow or unreachable Open Library (no
+ * internet in the classroom is normal) falls back to GENERAL_BOOK_POOL above,
+ * and a teacher can switch it off entirely with Settings ▸ suggestion source.
+ */
+const OL_BASE = (process.env.BOOKRECS_OL_BASE || "https://openlibrary.org").replace(/\/+$/, "");
+const OL_TIMEOUT_MS = parseInt(process.env.BOOKRECS_OL_TIMEOUT_MS, 10) || 5000;
+const OL_UA = "ClassroomBookRecs/1.0 (classroom book recommendations; teacher-run)";
+const OL_CACHE_TTL = 1000 * 60 * 60 * 6;   // reuse a query's results for 6 hours
+const OL_CACHE_MAX = 200;                  // keep memory bounded
+const OL_DOWN_COOLDOWN = 1000 * 60;        // after a failure, stop trying for a minute
+const olCache = new Map();                 // query -> { at, docs }
+const olInFlight = new Map();              // query -> in-flight promise (dedupe)
+let olDownUntil = 0;                       // set when Open Library looks unreachable
+
+/* Questionnaire genre -> Open Library subject. OL's subject strings are its
+ * own vocabulary, so the words a student picks need translating. */
+const OL_GENRE_SUBJECTS = {
+  "fantasy": "fantasy fiction",
+  "sci-fi": "science fiction",
+  "mystery": "detective and mystery stories",
+  "romance": "romance fiction",
+  "horror": "horror tales",
+  "historical fiction": "historical fiction",
+  "adventure": "adventure stories",
+  "realistic fiction": "children's fiction",
+  "humor": "humorous stories",
+  "graphic novels": "comic books, strips",
+  "non-fiction": "juvenile nonfiction",
+  "poetry": "children's poetry",
+};
+const OL_THEME_SUBJECTS = {
+  "friendship": "friendship",
+  "family": "families",
+  "identity": "identity",
+  "justice": "justice",
+  "survival": "survival",
+  "coming of age": "coming of age",
+  "technology": "technology",
+  "nature": "nature",
+  "war & conflict": "war",
+  "magic & supernatural": "magic",
+  "social issues": "social issues",
+  "science": "science",
+};
+
+/* Nothing adult should reach a middle-school student, and a 900-page epic is no
+ * use to a Grade 7 class. Reject on subjects/title, and on length. */
+const OL_BLOCKED_WORDS = [
+  "erotica", "erotic", "pornograph", "bdsm", "sexual content", "adult fiction",
+  "sexual behaviour", "sexual behavior", "sex instruction", "true crime",
+  "serial murder", "murderers—", "drug abuse", "incest",
+];
+const OL_MIN_PAGES = 70;
+const OL_MAX_PAGES = 700;
+
+function olSearchUrl(params) {
+  const u = new URL(`${OL_BASE}/search.json`);
+  Object.keys(params).forEach((k) => {
+    if (params[k] !== undefined && params[k] !== null && params[k] !== "") {
+      u.searchParams.set(k, params[k]);
+    }
+  });
+  return u.toString();
+}
+
+/* One Open Library search, with a hard timeout so nobody waits on it forever. */
+async function openLibrarySearch(params) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OL_TIMEOUT_MS);
+  try {
+    const res = await fetch(olSearchUrl(params), {
+      headers: { "User-Agent": OL_UA, Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data.docs) ? data.docs : [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* Turn the questionnaire answers into a plain-word search. Plain words (rather
+ * than subject:... operators) keep this robust: Open Library matches title,
+ * author and subject text, and scoreBook() does the fine ranking afterwards. */
+function buildOpenLibraryQuery(prefs) {
+  const words = [];
+  const genres = (prefs.genres || []).slice(0, 3);
+  const subjects = genres.map((g) => OL_GENRE_SUBJECTS[String(g).toLowerCase()]).filter(Boolean);
+  // Primary genre drives the search; extra genres just widen it.
+  if (subjects[0]) words.push(subjects[0]);
+  const themes = (prefs.themes || []).slice(0, 3)
+    .filter((t) => !/^nothing/i.test(String(t)))
+    .map((t) => OL_THEME_SUBJECTS[String(t).toLowerCase()] || String(t).toLowerCase());
+  words.push(...themes.slice(0, 2));
+  if (subjects.length > 1 && words.length < 4) words.push(subjects[1]);
+
+  // Nothing usable in the answers (e.g. only free-text replies): a broad
+  // middle-grade query still gives the student something to read.
+  if (!words.length) words.push("juvenile fiction", "adventure", "friendship");
+
+  return words.join(" ");
+}
+
+function olIsAllowed(doc) {
+  const haystack = [
+    doc.title,
+    ...(doc.subject || []).slice(0, 30),
+  ].join(" ").toLowerCase();
+  if (OL_BLOCKED_WORDS.some((w) => haystack.includes(w))) return false;
+  // English only — the query already asks for it, this catches stragglers.
+  if (Array.isArray(doc.language) && doc.language.length && !doc.language.includes("eng")) return false;
+  const pages = Number(doc.number_of_pages_median) || 0;
+  if (pages && (pages < OL_MIN_PAGES || pages > OL_MAX_PAGES)) return false;
+  return true;
+}
+
+/* Reverse of the maps above: Open Library subjects -> the genre/theme tags this
+ * app uses, so the cards look the same as books from our own shelves and
+ * scoreBook() can match them against what the student asked for. */
+function olTaxonomy(doc) {
+  const subjects = (doc.subject || []).map((s) => s.toLowerCase());
+  const has = (...needles) => subjects.some((s) => needles.some((n) => s.includes(n)));
+
+  const genres = [];
+  if (has("fantasy")) genres.push("Fantasy");
+  if (has("science fiction", "sci-fi")) genres.push("Sci-Fi");
+  if (has("detective and mystery", "mystery", "detective")) genres.push("Mystery");
+  if (has("romance", "love stories")) genres.push("Romance");
+  if (has("horror", "ghost stories")) genres.push("Horror");
+  if (has("historical fiction", "history")) genres.push("Historical Fiction");
+  if (has("adventure")) genres.push("Adventure");
+  if (has("humorous", "humour", "humor", "comic")) genres.push("Humor");
+  if (has("comic books", "graphic novel", "strip")) genres.push("Graphic Novels");
+  if (has("poetry", "poems")) genres.push("Poetry");
+  if (has("juvenile nonfiction", "nonfiction", "non-fiction")) genres.push("Non-Fiction");
+  if (!genres.length && has("juvenile fiction", "children's fiction", "fiction")) genres.push("Realistic Fiction");
+
+  const themes = [];
+  if (has("friendship", "friends")) themes.push("Friendship");
+  if (has("families", "family")) themes.push("Family");
+  if (has("identity")) themes.push("Identity");
+  if (has("justice")) themes.push("Justice");
+  if (has("survival")) themes.push("Survival");
+  if (has("coming of age")) themes.push("Coming of age");
+  if (has("technology")) themes.push("Technology");
+  if (has("nature")) themes.push("Nature");
+  if (has("war")) themes.push("War & Conflict");
+  if (has("magic", "supernatural")) themes.push("Magic & Supernatural");
+  if (has("social issues")) themes.push("Social Issues");
+  if (has("science")) themes.push("Science");
+
+  return { genres: genres.slice(0, 3), themes: themes.slice(0, 4) };
+}
+
+function olAvailability(doc) {
+  const access = String(doc.ebook_access || "");
+  if (access === "public") return { kind: "public", label: "Read it free on Open Library" };
+  if (access === "borrowable") return { kind: "borrow", label: "Borrow it free on Open Library" };
+  return { kind: "print", label: "Look for it at your public library" };
+}
+
+function olDocToBook(doc) {
+  const tax = olTaxonomy(doc);
+  const key = doc.key || "";
+  const availability = olAvailability(doc);
+  return {
+    id: "ol-" + (key.replace(/[^a-zA-Z0-9]/g, "") || crypto.randomBytes(4).toString("hex")),
+    title: doc.title || "",
+    author: (doc.author_name || []).slice(0, 2).join(", "),
+    genres: tax.genres,
+    themes: tax.themes,
+    pages: Number(doc.number_of_pages_median) || null,
+    firstPublished: doc.first_publish_year || null,
+    isbn: (doc.isbn || [])[0] || "",
+    coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : "",
+    openLibraryKey: key,
+    openLibraryUrl: key ? `https://openlibrary.org${key}` : "",
+    availability: availability.kind,
+    availabilityLabel: availability.label,
+    inLibrary: false,
+    source: "openlibrary",
+    approved: true,
+  };
+}
+
+/* Search Open Library for this student, newest results each time "refresh" is
+ * set regardless of the cache. Returns [] if Open Library can't be reached. */
+async function fetchOpenLibraryBooks(prefs, opts = {}) {
+  // No internet (or a firewall silently dropping packets): don't make every
+  // student in the class wait for the timeout — fall straight to the saved list
+  // until the cooldown expires.
+  if (Date.now() < olDownUntil) return null;
+
+  const q = buildOpenLibraryQuery(prefs);
+  // Rotate through a few pages of results so a refresh shows new books, and
+  // never hammer one page of results for every student in the class.
+  const offset = opts.refresh ? [0, 40, 80, 120][Math.floor(Math.random() * 4)] : 0;
+  const cacheKey = `${q}|${offset}`;
+
+  const cached = olCache.get(cacheKey);
+  if (!opts.refresh && cached && Date.now() - cached.at < OL_CACHE_TTL) return cached.docs;
+  if (olInFlight.has(cacheKey)) return olInFlight.get(cacheKey);
+
+  const pending = openLibrarySearch({
+    q,
+    fields: "key,title,author_name,first_publish_year,isbn,number_of_pages_median,subject,cover_i,ebook_access,language",
+    limit: 60,
+    offset,
+    language: "eng",
+  })
+    .then((docs) => {
+      if (olCache.size >= OL_CACHE_MAX) olCache.delete(olCache.keys().next().value);
+      olCache.set(cacheKey, { at: Date.now(), docs });
+      olDownUntil = 0;
+      console.log(`[openlibrary] "${q}" -> ${docs.length} result(s)`);
+      return docs;
+    })
+    .catch((e) => {
+      olDownUntil = Date.now() + OL_DOWN_COOLDOWN;
+      console.log(`[openlibrary] unavailable (${e.message}) — using the built-in suggestion list for the next ${Math.round(OL_DOWN_COOLDOWN / 1000)}s`);
+      return null; // null = "couldn't reach it", [] would mean "no matches"
+    })
+    .finally(() => olInFlight.delete(cacheKey));
+
+  olInFlight.set(cacheKey, pending);
+  return pending;
+}
+
 
 /* How much a book suits a student's questionnaire answers. Used for both the
  * class-library list and the "we don't have it" list so the two are ranked the
@@ -605,10 +865,19 @@ function isbnKey(s) {
   return String(s || "").replace(/\D/g, "");
 }
 
-function computeRecommendations(userId) {
+/* Builds both recommendation lists for a student.
+ * async because the "we don't have it" list is grabbed live from Open Library
+ * (see the Open Library section). Pass { refresh, exclude } to ask for a fresh
+ * set of suggestions. */
+async function computeRecommendations(userId, opts = {}) {
   const user = state.users.find((u) => u.id === userId);
   const answers = (state.responses || []).filter((q) => q.userId === userId);
-  const empty = { library: [], general: [], recommendations: [], books: state.books, counts: { library: 0, general: 0 }, limits: { library: 5, general: 5 } };
+  const empty = {
+    library: [], general: [], recommendations: [], books: state.books,
+    counts: { library: 0, general: 0 },
+    limits: { library: 5, general: 5 },
+    generalSource: { source: "none", live: false, note: "" },
+  };
   if (!answers.length || !user) return empty;
 
   // Gather all answer data
@@ -632,7 +901,8 @@ function computeRecommendations(userId) {
   ).slice(0, libraryLimit);
 
   // ---- 2. Books we don't have, to find elsewhere ----
-  // Teacher-added "we don't own this" books come first, then the built-in pool.
+  // Owned titles/ISBNs, so we never suggest a book that is already on the shelf
+  // (an owned copy means the student can just borrow it from us).
   const ownedTitles = new Set();
   const ownedIsbns = new Set();
   state.books.forEach((b) => {
@@ -641,21 +911,64 @@ function computeRecommendations(userId) {
     if (b.isbn) ownedIsbns.add(isbnKey(b.isbn));
   });
 
-  const candidates = [
-    ...state.books.filter((b) => b.approved !== false && b.inLibrary === false),
-    ...GENERAL_BOOK_POOL,
-  ];
+  // Books the teacher marked "we don't have this" lead the list, whatever the
+  // source is — they are hand-picked, and one of them may later be purchased.
+  const teacherWanted = rankBooks(
+    state.books.filter((b) => b.approved !== false && b.inLibrary === false),
+    prefs
+  );
+
+  const takeFrom = (books) => {
+    const out = [];
+    books.forEach((b) => {
+      const tk = titleKey(b.title);
+      const isbn = isbnKey(b.isbn);
+      if (!tk) return;
+      if (ownedTitles.has(tk)) return;                 // it's on our shelf
+      if (isbn && ownedIsbns.has(isbn)) return;        // same book, other printing
+      if (excluded.has(tk)) return;                    // student said "not this one" (refresh)
+      if (seen.has(tk)) return;                        // no duplicates in the list
+      seen.add(tk);
+      out.push(b);
+    });
+    return out;
+  };
   const seen = new Set();
-  const general = rankBooks(candidates, prefs).filter((b) => {
-    const tk = titleKey(b.title);
-    const isbn = isbnKey(b.isbn);
-    if (!tk) return false;
-    if (ownedTitles.has(tk)) return false;                       // it's on our shelf
-    if (isbn && ownedIsbns.has(isbn)) return false;              // same book, other printing
-    if (seen.has(tk)) return false;                              // no duplicates in the list
-    seen.add(tk);
-    return true;
-  }).slice(0, generalLimit);
+  const excluded = new Set(
+    String(opts.exclude || "").split(",").map((t) => titleKey(t)).filter(Boolean)
+  );
+
+  // What the teacher wants students to read about, then live Open Library
+  // results, then the built-in pool (which always has matches to offer).
+  const general = takeFrom(teacherWanted).slice(0, generalLimit);
+  const wantedCount = general.length;
+
+  const source = String(state.settings.generalSource || "openlibrary").toLowerCase();
+  let live = false;
+  let liveError = false;
+
+  if (source !== "pool" && general.length < generalLimit) {
+    // Only search for what this student actually likes — a broad query leaks
+    // unrelated books through, and the answers are right there.
+    const docs = await fetchOpenLibraryBooks(prefs, { refresh: !!opts.refresh });
+    if (docs === null) liveError = true;
+    else if (docs.length) {
+      const olBooks = docs
+        .filter(olIsAllowed)
+        .map(olDocToBook)
+        .filter((b) => b.title && b.author);
+      // Scored exactly like our own books, so a poor match isn't shown at all.
+      const ranked = rankBooks(olBooks, prefs);
+      const filled = takeFrom(ranked).slice(0, generalLimit - general.length);
+      if (filled.length) live = true;
+      general.push(...filled);
+    }
+  }
+
+  // Top up from the built-in pool: no internet, no matches, or Open Library off.
+  if (general.length < generalLimit) {
+    general.push(...takeFrom(rankBooks(GENERAL_BOOK_POOL, prefs)).slice(0, generalLimit - general.length));
+  }
 
   const maxScore = maxPossibleScore(prefs) || 1;
   const toRec = (b, inLibrary) => ({
@@ -671,6 +984,12 @@ function computeRecommendations(userId) {
   const libraryRecs = library.map((b) => toRec(b, true));
   const generalRecs = general.map((b) => toRec(b, false));
 
+  let note = "";
+  if (source === "pool") note = "built-in list (set by your teacher)";
+  else if (live) note = "live from Open Library";
+  else if (liveError) note = "Open Library is offline right now — showing our saved ideas";
+  else note = "our saved ideas";
+
   return {
     library: libraryRecs,
     general: generalRecs,
@@ -679,6 +998,12 @@ function computeRecommendations(userId) {
     books: state.books,
     counts: { library: libraryRecs.length, general: generalRecs.length },
     limits: { library: libraryLimit, general: generalLimit },
+    generalSource: {
+      source: live ? "openlibrary" : "pool",
+      live,
+      teacherWanted: wantedCount,
+      note,
+    },
   };
 }
 
@@ -823,12 +1148,18 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { questions, answers, className: cls ? cls.name : "" });
   }
 
-  // GET /api/recommendations
+  // GET /api/recommendations[?refresh=1][&exclude=title,title]
   if (pathname === "/api/recommendations" && method === "GET") {
     const sess = getSession(req, res);
     if (!sess) return json(res, 401, { error: "Not signed in" });
-    // { library: [...], general: [...], counts, books } — two separate lists
-    return json(res, 200, computeRecommendations(sess.userId));
+    // { library: [...], general: [...], counts, limits, generalSource, books }
+    // The general list is grabbed from Open Library at request time, so this
+    // handler waits on it (with a timeout) — see fetchOpenLibraryBooks().
+    const result = await computeRecommendations(sess.userId, {
+      refresh: url.searchParams.get("refresh") === "1",
+      exclude: url.searchParams.get("exclude") || "",
+    });
+    return json(res, 200, result);
   }
 
   // GET /api/state
@@ -1444,6 +1775,7 @@ function printBanner(port, savedPort) {
 
 /* ----------------------------- start ----------------------------------- */
 loadData();
+loadSessions(); // keep everyone signed in across a restart
 seed();
 persist();
 

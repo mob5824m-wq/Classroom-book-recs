@@ -241,7 +241,18 @@
         <div class="form-group">
           <label for="setting-generalRecs">Books We Don't Have — picks per student</label>
           <input type="number" id="setting-generalRecs" min="0" max="25" value="5">
-          <p class="help">Suggestions to find at the public library or a bookstore. Books you mark “we don't have this” come first, then a built-in list of popular titles — anything you already own is never suggested here.</p>
+          <p class="help">Suggestions to find at the public library or a bookstore. Books you mark “we don't have this” come first, then (see below) Open Library — anything you already own is never suggested here.</p>
+        </div>
+        <div class="form-group">
+          <label for="setting-generalSource">Where those suggestions come from</label>
+          <select id="setting-generalSource">
+            <option value="openlibrary">Open Library — live search using each student's answers</option>
+            <option value="pool">Built-in list — the same popular titles for everyone</option>
+          </select>
+          <p class="help">
+            Open Library (openlibrary.org) grabs books to match each student's genres and themes, and shows a “🔄 New ideas” button so they can ask for a different set.
+            It needs internet <em>on the computer running this server</em>; if it can't be reached, the built-in list is shown automatically instead, so students are never left with an empty list.
+          </p>
         </div>
         <div class="flex gap-1 mt-2">
           <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
@@ -519,6 +530,7 @@
         document.getElementById("setting-port").value = s.port || 8080;
         document.getElementById("setting-libraryRecs").value = s.libraryRecsPerStudent ?? 5;
         document.getElementById("setting-generalRecs").value = s.generalRecsPerStudent ?? 5;
+        document.getElementById("setting-generalSource").value = s.generalSource || "openlibrary";
 
         loadNetworkInfo();
       } catch (e) {
@@ -1225,6 +1237,7 @@
           port: newPort,
           libraryRecsPerStudent: isNaN(libraryRecs) ? 5 : libraryRecs,
           generalRecsPerStudent: isNaN(generalRecs) ? 5 : generalRecs,
+          generalSource: document.getElementById("setting-generalSource").value === "pool" ? "pool" : "openlibrary",
           maxRecsPerStudent: (isNaN(libraryRecs) ? 5 : libraryRecs) + (isNaN(generalRecs) ? 5 : generalRecs),
         };
         await App.postState(stateData);

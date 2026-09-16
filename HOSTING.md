@@ -375,6 +375,8 @@ Full setup, firewall commands and a troubleshooting table: **Option C** above;
 | Prove the network path alone | `node deploy/lan-check.js --serve-test --port=8090` |
 | Pick a port | `node server.js --port=9090` (or `PORT=9090 node server.js`) |
 | Serve this computer only | `node server.js --host=127.0.0.1` |
+| No internet on the server? | Settings ▸ *Where those suggestions come from* ▸ Built-in list (also automatic if Open Library can't be reached) |
+| Slow Open Library | `BOOKRECS_OL_TIMEOUT_MS=2500 node server.js` (default 5000) |
 | Easiest public HTTPS | Cloudflare Tunnel (Option A) |
 | Own hostname + HTTPS | DuckDNS + Caddy (Option B) |
 | Auto-start (Linux) | systemd unit (above) |
