@@ -215,6 +215,12 @@
           <input type="text" id="setting-room" placeholder="e.g. Room 204">
         </div>
         <div class="form-group">
+          <label for="net-info">How Students Connect (this network)</label>
+          <div id="net-info" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;background:rgba(67,97,238,.04)">
+            <p class="help">Loading…</p>
+          </div>
+        </div>
+        <div class="form-group">
           <label for="setting-port">Server Port</label>
           <div style="border:2px solid var(--danger);border-radius:var(--radius-sm);padding:1rem;background:rgba(239,71,111,.05)">
             <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
@@ -500,8 +506,39 @@
         document.getElementById("setting-room").value = s.room || "";
         document.getElementById("setting-port").value = s.port || 8080;
         document.getElementById("setting-maxRecs").value = s.maxRecsPerStudent || 10;
+
+        loadNetworkInfo();
       } catch (e) {
         App.toast("Could not load data", "error");
+      }
+    }
+
+    /* Show the URL other devices must use, straight from the server, so the
+     * address you hand out is never guessed (LAN IP + real port). */
+    async function loadNetworkInfo() {
+      const box = document.getElementById("net-info");
+      if (!box) return;
+      try {
+        const n = await App.api("/api/network");
+        const urls = n.lanUrls || [];
+        const rows = urls.length
+          ? urls.map((u) =>
+              `<div style="display:flex;gap:.5rem;align-items:center;margin:.3rem 0">
+                 <code style="flex:1;font-size:1.05rem;word-break:break-all">${u}</code>
+                 <button class="btn btn-secondary btn-sm" onclick="App.copyText('${u}', 'Copied — share this with the class')">Copy</button>
+               </div>`).join("")
+          : `<p class="help" style="color:var(--danger)">The server found no usable LAN address, so other devices can’t reach it yet. Check the network cable/Wi-Fi, then re-open this page.</p>`;
+        box.innerHTML = `
+          <p class="help" style="margin-bottom:.4rem">Teacher’s own computer only: <code>${n.localUrl}</code></p>
+          <p class="help" style="margin-bottom:.2rem"><strong>Every other device should open:</strong>
+            ${n.primary && n.primary.via ? `<span class="help">auto-detected (${n.primary.iface || "?"} · ${n.primary.via})</span>` : ""}
+          </p>
+          ${rows}
+          <p class="help" style="margin-top:.5rem">${n.note}</p>
+          <p class="help">Same address is kept in <code>${n.urlFile || "bookrecs-url.txt"}</code> next to server.js, and re-checked every 20 s if the network changes.</p>
+          <p class="help">Trouble? On this computer run <code>node deploy/lan-check.js</code> — it tells you what is blocking access.</p>`;
+      } catch (e) {
+        box.innerHTML = `<p class="help">Network info unavailable (${e.message})</p>`;
       }
     }
 
